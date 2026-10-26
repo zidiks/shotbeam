@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use tauri::{Manager, RunEvent, WebviewWindowBuilder};
 
+mod mcp;
+
 const ENGINE_PORT: u16 = 47811;
 
 /// The engine process this app started (None when one was already running).
@@ -27,7 +29,12 @@ fn engine_alive() -> bool {
 fn repo_root() -> PathBuf {
     std::env::var_os("SHOTBEAM_REPO")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join(".."))
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("..")
+                .join("..")
+        })
 }
 
 /// The library folder, found the way the engine finds it: SHOTBEAM_HOME, else `home` in
@@ -53,7 +60,8 @@ fn start_engine() -> Option<Child> {
     }
     let engine_dir = repo_root().join("packages").join("engine");
     let mut cmd = Command::new("node");
-    cmd.args(["--import", "tsx", "src/main.ts"]).current_dir(&engine_dir);
+    cmd.args(["--import", "tsx", "src/main.ts"])
+        .current_dir(&engine_dir);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -63,7 +71,10 @@ fn start_engine() -> Option<Child> {
     match cmd.spawn() {
         Ok(child) => Some(child),
         Err(err) => {
-            eprintln!("Could not start the Shotbeam engine in {}: {err}", engine_dir.display());
+            eprintln!(
+                "Could not start the Shotbeam engine in {}: {err}",
+                engine_dir.display()
+            );
             None
         }
     }
@@ -74,6 +85,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![mcp::mcp_connect])
         .setup(|app| {
             app.manage(EngineProcess(Mutex::new(start_engine())));
             // WebView2 keeps its cache and storage in the library too, not on the (small)
@@ -85,9 +97,11 @@ pub fn run() {
                 .first()
                 .cloned()
                 .expect("tauri.conf.json defines the main window");
-            WebviewWindowBuilder::from_config(app.handle(), &config)?
-                .data_directory(library_root().join("webview"))
-                .build()?;
+            let builder = WebviewWindowBuilder::from_config(app.handle(), &config)?
+                .data_directory(library_root().join("webview"));
+            #[cfg(windows)]
+            let builder = builder.decorations(false).shadow(true);
+            builder.build()?;
             Ok(())
         })
         .build(tauri::generate_context!())

@@ -13,6 +13,7 @@ import {
   Segmented,
   Textarea,
 } from '../components/common'
+import { FormatMenu } from '../components/menus'
 import { api } from '../lib/api'
 import { errorToast, useFormat, useFormats, useReferences, useVoices } from '../lib/queries'
 import { useUi } from '../lib/store'
@@ -454,20 +455,22 @@ export function FormatsPage({ project, id }: { project: Project; id?: string }) 
         <ul className="px-2 pb-4">
           {formats.map((f) => (
             <li key={f.id}>
-              <button
-                type="button"
-                onClick={() => navigate({ kind: 'formats', id: f.id })}
-                className={cn(
-                  'w-full rounded-md px-3 py-2 text-left hover:bg-accent',
-                  f.id === id && 'bg-accent',
-                )}
-              >
-                <p className="truncate text-sm font-medium">{f.name}</p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {f.recipe.aspect} · {f.recipe.beats.length} частей
-                  {f.projectId ? '' : ' · все проекты'}
-                </p>
-              </button>
+              <FormatMenu format={f}>
+                <button
+                  type="button"
+                  onClick={() => navigate({ kind: 'formats', id: f.id })}
+                  className={cn(
+                    'w-full rounded-md px-3 py-2 text-left hover:bg-accent',
+                    f.id === id && 'bg-accent',
+                  )}
+                >
+                  <p className="truncate text-sm font-medium">{f.name}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {f.recipe.aspect} · {f.recipe.beats.length} частей
+                    {f.projectId ? '' : ' · все проекты'}
+                  </p>
+                </button>
+              </FormatMenu>
             </li>
           ))}
         </ul>

@@ -50,7 +50,13 @@ export interface AssetQuery {
   offset?: number
 }
 
+/** Edits of one composition that can be undone (kept while the engine runs). */
+const HISTORY_LIMIT = 200
+
 export class Store {
+  private readonly undo = new Map<string, Composition[]>()
+  private readonly redo = new Map<string, Composition[]>()
+
   constructor(
     readonly db: DatabaseSync,
     private readonly bus: EventBus,
@@ -420,7 +426,11 @@ export class Store {
    * Saves a composition. With `expectVersion`, refuses when someone saved since that version
    * (the editor and Claude edit the same document).
    */
-  saveComposition(c: Composition, expectVersion?: number): Composition {
+  saveComposition(
+    c: Composition,
+    expectVersion?: number,
+    opts: { history?: 'record' | 'skip' | 'keep-redo' } = {},
+  ): Composition {
     return transaction(this.db, () => {
       const row = this.one('SELECT data FROM compositions WHERE id = ?', c.id)
       const current = row ? parse(Composition, row.data) : null
@@ -428,6 +438,15 @@ export class Store {
         throw new Conflict(
           `The composition changed meanwhile (version ${current.version}, expected ${expectVersion}); read it again`,
         )
+      }
+      // Undo history: every edit (the editor's or Claude's) can be taken back. Internal
+      // bookkeeping (a motion render landing) is not an edit.
+      if (current && opts.history !== 'skip') {
+        const undo = this.undo.get(c.id) ?? []
+        undo.push(current)
+        if (undo.length > HISTORY_LIMIT) undo.shift()
+        this.undo.set(c.id, undo)
+        if (opts.history !== 'keep-redo') this.redo.delete(c.id)
       }
       const saved = Composition.parse({
         ...c,
@@ -449,7 +468,31 @@ export class Store {
 
   deleteComposition(id: string) {
     this.run('DELETE FROM compositions WHERE id = ?', id)
+    this.undo.delete(id)
+    this.redo.delete(id)
     this.bus.changed('composition', id)
+  }
+
+  history(id: string) {
+    return { undo: this.undo.get(id)?.length ?? 0, redo: this.redo.get(id)?.length ?? 0 }
+  }
+
+  /**
+   * Steps back (or forward) one edit. The restored document is saved as a new version, so
+   * open editors and Claude see it like any other change.
+   */
+  stepHistory(id: string, direction: 'undo' | 'redo'): Composition {
+    const from = direction === 'undo' ? this.undo : this.redo
+    const to = direction === 'undo' ? this.redo : this.undo
+    const stack = from.get(id) ?? []
+    const target = stack.pop()
+    if (!target) throw new Conflict(direction === 'undo' ? 'Nothing to undo' : 'Nothing to redo')
+    const current = this.getComposition(id)
+    const back = to.get(id) ?? []
+    back.push(current)
+    to.set(id, back)
+    // Restoring must not push onto undo again or clear redo.
+    return this.saveComposition({ ...target, id }, undefined, { history: 'skip' })
   }
 
   // Jobs

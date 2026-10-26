@@ -2,7 +2,8 @@ import type { Settings } from '@shotbeam/core'
 import { FISH_MODELS } from '@shotbeam/core'
 import { Button, Input } from '@shotbeam/ui'
 import { useMutation } from '@tanstack/react-query'
-import { Check, Copy } from 'lucide-react'
+import { invoke, isTauri } from '@tauri-apps/api/core'
+import { Copy, Plug } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Choice, Field, PageHeader, Section, Segmented, StatusDot } from '../components/common'
@@ -28,32 +29,86 @@ const FEATURES: { id: string; label: string; hint: string }[] = [
 ]
 
 function McpHelp({ library, entry }: { library: string; entry: string }) {
-  const [copied, setCopied] = useState(false)
-  const cmd = `claude mcp add --scope user shotbeam -- node ${entry}`
+  const [connecting, setConnecting] = useState<string | null>(null)
+  const [installedPath, setInstalledPath] = useState('')
+  const cmd = `claude mcp add --scope user shotbeam -- node "${entry}"`
+  const connect = async (client: string) => {
+    setConnecting(client)
+    try {
+      const path = await invoke<string>('mcp_connect', { client })
+      setInstalledPath(path)
+      toast.success('Shotbeam добавлен. Перезапусти выбранное приложение.')
+    } catch (err) {
+      errorToast(err)
+    } finally {
+      setConnecting(null)
+    }
+  }
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        JSON.stringify(
+          {
+            mcpServers: {
+              shotbeam: { command: 'node', args: [entry], env: { SHOTBEAM_HOME: library } },
+            },
+          },
+          null,
+          2,
+        ),
+      )
+      toast.success('Настройки MCP скопированы')
+    } catch (err) {
+      errorToast(err)
+    }
+  }
   return (
     <Section
-      title="Claude (MCP)"
-      description="Подключи Shotbeam к Claude Code одной командой; в Claude Desktop — тем же сервером в настройках MCP."
+      title="Подключённые приложения (MCP)"
+      description="Подключи студию к своему AI-помощнику. После добавления перезапусти выбранное приложение."
     >
-      <div
-        className="flex items-center gap-2 rounded-md bg-muted p-2 font-mono text-xs"
-        data-selectable
-      >
-        <span className="min-w-0 flex-1 break-all">{cmd}</span>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          onClick={() => {
-            void navigator.clipboard.writeText(cmd)
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1500)
-          }}
-          aria-label="Скопировать"
-        >
-          {copied ? <Check /> : <Copy />}
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            ['claude', 'Claude Desktop'],
+            ['cursor', 'Cursor'],
+            ['codex', 'Codex'],
+          ] as const
+        ).map(([client, label]) => (
+          <Button
+            key={client}
+            variant="outline"
+            size="sm"
+            disabled={!isTauri() || connecting !== null}
+            loading={connecting === client}
+            onClick={() => void connect(client)}
+          >
+            <Plug />
+            Добавить в {label}
+          </Button>
+        ))}
+        <Button variant="ghost" size="sm" onClick={() => void copy()}>
+          <Copy />
+          Скопировать настройки
         </Button>
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">Библиотека: {library}</p>
+      {!isTauri() ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Автоподключение доступно в приложении Shotbeam для компьютера. Здесь можно скопировать
+          настройки.
+        </p>
+      ) : null}
+      {installedPath ? (
+        <p className="mt-2 break-all text-xs text-muted-foreground" data-selectable>
+          Настройки сохранены: {installedPath}
+        </p>
+      ) : null}
+      <details className="mt-3 text-xs text-muted-foreground">
+        <summary className="cursor-pointer">Подключить Claude Code командой</summary>
+        <pre className="mt-2 whitespace-pre-wrap break-all rounded-md bg-muted p-2" data-selectable>
+          {cmd}
+        </pre>
+      </details>
     </Section>
   )
 }
@@ -91,6 +146,8 @@ export function SettingsPage() {
             ]}
           />
         </Section>
+
+        {setup ? <McpHelp library={setup.library} entry={setup.mcpEntry} /> : null}
 
         <Section
           title="Голос"
@@ -237,8 +294,6 @@ export function SettingsPage() {
             </Field>
           </div>
         </Section>
-
-        {setup ? <McpHelp library={setup.library} entry={setup.mcpEntry} /> : null}
       </div>
     </div>
   )

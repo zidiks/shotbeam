@@ -6,7 +6,7 @@ import type {
   Job,
   MotionEngine,
 } from '@shotbeam/core'
-import { findItem } from '@shotbeam/core'
+import { compositionDuration, findItem, isFree, itemEnd } from '@shotbeam/core'
 import {
   Button,
   DropdownMenu,
@@ -16,23 +16,41 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   Input,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from '@shotbeam/ui'
 import { useMutation, useQueries } from '@tanstack/react-query'
-import { Captions, Clapperboard, Pause, Play, Plus, SkipBack, Type, Wand2 } from 'lucide-react'
+import {
+  Captions,
+  Clapperboard,
+  Pause,
+  Play,
+  Plus,
+  Redo2,
+  SkipBack,
+  Type,
+  Undo2,
+  Wand2,
+} from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { AssetCard } from '../../components/AssetCard'
 import { Busy, Progress, Segmented } from '../../components/common'
+import { AssetMenu } from '../../components/menus'
 import { api, mediaUrl } from '../../lib/api'
 import { useJobFor } from '../../lib/events'
+import { comboLabel, matches, typing } from '../../lib/hotkeys'
 import {
   errorToast,
   keys,
   useAssets,
   useComposition,
+  useCompositionHistory,
   useCompositionOps,
   useMotionTemplates,
   useSettings,
+  useUndoRedo,
 } from '../../lib/queries'
 import { useUi } from '../../lib/store'
 import { Inspector } from './Inspector'
@@ -68,7 +86,9 @@ function MediaBin({ projectId, onAdd }: { projectId: string; onAdd: (a: Asset) =
           <div className="grid grid-cols-2 gap-2">
             {assets.map((a) => (
               <div key={a.id} className="group relative">
-                <AssetCard asset={a} draggable onClick={() => onAdd(a)} />
+                <AssetMenu asset={a}>
+                  <AssetCard asset={a} draggable onClick={() => onAdd(a)} />
+                </AssetMenu>
               </div>
             ))}
           </div>
@@ -135,29 +155,8 @@ export function EditorPage({ id }: { id: string }) {
   }, [renderJob?.status])
 
   const apply = (list: CompositionOp[]) => ops.mutate(list)
-
-  // Keyboard: space, S, Delete, arrows.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement
-      if (t.closest('input, textarea, [contenteditable="true"]')) return
-      const s = useEditor.getState()
-      if (e.code === 'Space') {
-        e.preventDefault()
-        s.setPlaying(!s.playing)
-      } else if (e.code === 'KeyS' && s.selected) {
-        apply([{ op: 'split', id: s.selected, at: s.time }])
-      } else if ((e.code === 'Delete' || e.code === 'Backspace') && s.selected) {
-        apply([{ op: 'remove', id: s.selected, ripple: e.shiftKey }])
-        s.select(null)
-      } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
-        const f = 1 / (comp.data?.fps ?? 30)
-        s.setTime(s.time + (e.code === 'ArrowLeft' ? -f : f) * (e.shiftKey ? 10 : 1))
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [comp.data?.fps, apply])
+  const history = useCompositionHistory(id).data
+  const undoRedo = useUndoRedo(id)
 
   const captions = useMutation({
     mutationFn: () =>
@@ -173,6 +172,143 @@ export function EditorPage({ id }: { id: string }) {
     mutationFn: (n: string) => api.patch(`/api/compositions/${id}`, { name: n }),
     onError: errorToast,
   })
+
+  // Every editor shortcut (the list the help dialog shows is lib/hotkeys.ts). Handlers read the
+  // latest state through refs, so the listener is added once.
+  const actions = useRef({ apply, undoRedo, captions, render })
+  actions.current = { apply, undoRedo, captions, render }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (typing(e) || e.defaultPrevented) return
+      const comp = latest.current
+      if (!comp) return
+      const s = useEditor.getState()
+      const a = actions.current
+      const sel = s.selected ? findItem(comp, s.selected) : null
+      const frame = 1 / comp.fps
+      const done = (action?: () => void) => {
+        e.preventDefault()
+        action?.()
+      }
+
+      if (matches(e, { code: 'KeyZ', mod: true })) return done(() => a.undoRedo.mutate('undo'))
+      if (
+        matches(e, { code: 'KeyZ', mod: true, shift: true }) ||
+        matches(e, { code: 'KeyY', mod: true })
+      )
+        return done(() => a.undoRedo.mutate('redo'))
+      if (matches(e, { code: 'KeyE', mod: true })) return done(() => a.render.mutate(true))
+      if (matches(e, { code: 'KeyE', mod: true, shift: true }))
+        return done(() => a.render.mutate(false))
+      if (matches(e, { code: 'Space' }) || matches(e, { code: 'KeyK' }))
+        return done(() => s.setPlaying(!s.playing))
+      if (matches(e, { code: 'Home' })) return done(() => s.setTime(0))
+      if (matches(e, { code: 'End' })) return done(() => s.setTime(compositionDuration(comp)))
+      if (matches(e, { code: 'Escape' })) return s.select(null)
+      if (matches(e, { code: 'KeyM' })) return s.setMagnet(!s.magnet)
+      if (matches(e, { code: 'Equal' }) || matches(e, { code: 'NumpadAdd' }))
+        return s.setZoom(s.zoom * 1.25)
+      if (matches(e, { code: 'Minus' }) || matches(e, { code: 'NumpadSubtract' }))
+        return s.setZoom(s.zoom / 1.25)
+      if (matches(e, { code: 'KeyT' }))
+        return a.apply([
+          {
+            op: 'add',
+            item: {
+              type: 'text',
+              start: s.time,
+              duration: 2.5,
+              text: 'Текст',
+              style: { y: 0.2 },
+              fadeIn: 0.15,
+              fadeOut: 0.15,
+            },
+          },
+        ])
+      if (matches(e, { code: 'KeyC', shift: true })) return a.captions.mutate()
+
+      // Playhead.
+      for (const [code, dir] of [
+        ['ArrowLeft', -1],
+        ['ArrowRight', 1],
+      ] as const) {
+        if (matches(e, { code }) || matches(e, { code, shift: true })) {
+          done()
+          return s.setTime(s.time + dir * frame * (e.shiftKey ? 10 : 1))
+        }
+      }
+      if (matches(e, { code: 'ArrowUp' }) || matches(e, { code: 'ArrowDown' })) {
+        done()
+        const cuts = [
+          ...new Set(comp.tracks.flatMap((t) => t.items.flatMap((i) => [i.start, itemEnd(i)]))),
+        ].sort((x, y) => x - y)
+        const next =
+          e.code === 'ArrowUp'
+            ? [...cuts].reverse().find((c) => c < s.time - 1e-3)
+            : cuts.find((c) => c > s.time + 1e-3)
+        return s.setTime(next ?? (e.code === 'ArrowUp' ? 0 : s.time))
+      }
+
+      // Clipboard works without a selection (paste).
+      if (matches(e, { code: 'KeyV', mod: true }) && s.clipboard) {
+        done()
+        const { id: _drop, ...copy } = s.clipboard
+        return a.apply([{ op: 'add', item: { ...copy, start: s.time } }])
+      }
+
+      if (!sel) return
+      const item = sel.item
+      if (matches(e, { code: 'KeyC', mod: true })) return done(() => s.copy(item))
+      if (matches(e, { code: 'KeyX', mod: true })) {
+        done()
+        s.copy(item)
+        s.select(null)
+        return a.apply([{ op: 'remove', id: item.id }])
+      }
+      if (matches(e, { code: 'KeyD', mod: true })) {
+        done()
+        const { id: _drop, ...copy } = item
+        const start = itemEnd(item)
+        const free = isFree(sel.track, start, start + (itemEnd(item) - item.start))
+        return a.apply([
+          { op: 'add', item: { ...copy, start }, trackId: free ? sel.track.id : undefined },
+        ])
+      }
+      if (matches(e, { code: 'KeyS' }) || matches(e, { code: 'KeyB', mod: true })) {
+        done()
+        if (s.time > item.start + 0.05 && s.time < itemEnd(item) - 0.05)
+          a.apply([{ op: 'split', id: item.id, at: s.time }])
+        return
+      }
+      if (
+        matches(e, { code: 'Delete' }) ||
+        matches(e, { code: 'Backspace' }) ||
+        matches(e, { code: 'Delete', shift: true }) ||
+        matches(e, { code: 'Backspace', shift: true })
+      ) {
+        done()
+        s.select(null)
+        return a.apply([{ op: 'remove', id: item.id, ripple: e.shiftKey }])
+      }
+      for (const [code, dir] of [
+        ['ArrowLeft', -1],
+        ['ArrowRight', 1],
+      ] as const) {
+        if (matches(e, { code, mod: true }) || matches(e, { code, mod: true, shift: true })) {
+          done()
+          return a.apply([
+            {
+              op: 'move',
+              id: item.id,
+              start: Math.max(0, item.start + dir * frame * (e.shiftKey ? 10 : 1)),
+            },
+          ])
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   if (!c)
     return comp.isLoading ? (
@@ -243,6 +379,32 @@ export function EditorPage({ id }: { id: string }) {
           onBlur={() => name.trim() && name !== c.name && rename.mutate(name.trim())}
           className="h-8 w-64 font-medium"
         />
+        <div className="flex items-center">
+          {(['undo', 'redo'] as const).map((d) => (
+            <Tooltip key={d}>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  disabled={!history?.[d] || undoRedo.isPending}
+                  onClick={() => undoRedo.mutate(d)}
+                  aria-label={d === 'undo' ? 'Отменить' : 'Повторить'}
+                >
+                  {d === 'undo' ? <Undo2 /> : <Redo2 />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {d === 'undo' ? 'Отменить' : 'Повторить'} ·{' '}
+                {comboLabel(
+                  d === 'undo'
+                    ? { code: 'KeyZ', mod: true }
+                    : { code: 'KeyZ', mod: true, shift: true },
+                )}
+                {history?.[d] ? ` · шагов: ${history[d]}` : ''}
+              </TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
         <span className="text-xs text-muted-foreground">
           {c.width}×{c.height} · {c.fps} fps · v{c.version}
         </span>

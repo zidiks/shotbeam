@@ -18,7 +18,10 @@ if (await alive()) {
   // Tauri stops the app when this command exits: stay until it stops us.
   setInterval(() => {}, 1 << 30)
 } else {
-  const child = spawn('pnpm', ['--filter', '@shotbeam/web', 'dev'], { stdio: 'inherit', shell: true })
+  const child = spawn('pnpm', ['--filter', '@shotbeam/web', 'dev'], {
+    stdio: 'inherit',
+    shell: true,
+  })
   child.on('exit', (code) => process.exit(code ?? 0))
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal))
 }

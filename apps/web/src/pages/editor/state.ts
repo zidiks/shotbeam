@@ -1,10 +1,10 @@
-import type { Composition } from '@shotbeam/core'
+import type { Composition, Item } from '@shotbeam/core'
 import { compositionDuration } from '@shotbeam/core'
 import { create } from 'zustand'
 
 /*
- * Editor state that is not the document: the playhead, playback, selection, zoom. One editor is
- * open at a time, so one store.
+ * Editor state that is not the document: the playhead, playback, selection, zoom, magnet and
+ * the copied item. One editor is open at a time, so one store.
  */
 
 interface EditorState {
@@ -13,10 +13,24 @@ interface EditorState {
   selected: string | null
   /** Pixels per second on the timeline. */
   zoom: number
+  /** Edges stick and items do not cover each other unless pushed through (see Timeline). */
+  magnet: boolean
+  /** An item copied with Ctrl+C, pasted at the playhead. */
+  clipboard: Item | null
   setTime: (t: number) => void
   setPlaying: (p: boolean) => void
   select: (id: string | null) => void
   setZoom: (z: number) => void
+  setMagnet: (m: boolean) => void
+  copy: (item: Item | null) => void
+}
+
+function loadMagnet() {
+  try {
+    return localStorage.getItem('shotbeam.magnet') !== '0'
+  } catch {
+    return true
+  }
 }
 
 export const useEditor = create<EditorState>((set) => ({
@@ -24,10 +38,19 @@ export const useEditor = create<EditorState>((set) => ({
   playing: false,
   selected: null,
   zoom: 80,
+  magnet: loadMagnet(),
+  clipboard: null,
   setTime: (time) => set({ time: Math.max(0, time) }),
   setPlaying: (playing) => set({ playing }),
   select: (selected) => set({ selected }),
   setZoom: (zoom) => set({ zoom: Math.max(10, Math.min(400, zoom)) }),
+  setMagnet: (magnet) => {
+    try {
+      localStorage.setItem('shotbeam.magnet', magnet ? '1' : '0')
+    } catch {}
+    set({ magnet })
+  },
+  copy: (clipboard) => set({ clipboard }),
 }))
 
 if (import.meta.env.DEV) (window as unknown as { __editor: typeof useEditor }).__editor = useEditor

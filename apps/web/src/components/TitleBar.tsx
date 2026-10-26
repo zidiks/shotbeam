@@ -12,16 +12,39 @@ import {
 } from '@shotbeam/ui'
 import {
   ArrowLeft,
+  ArrowRight,
   CircleAlert,
   CircleCheck,
+  Keyboard,
   ListChecks,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react'
 import { useActiveJobs, useLive } from '../lib/events'
 import { JOB_LABEL } from '../lib/format'
+import { type Combo, comboLabel } from '../lib/hotkeys'
 import { useUi } from '../lib/store'
 import { Progress } from './common'
+import { customWindow, WindowControls } from './WindowControls'
+
+function Tip({
+  label,
+  combo,
+  children,
+}: {
+  label: string
+  combo: Combo
+  children: React.ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent>
+        {label} · {comboLabel(combo)}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
 
 /** Background work: a spinner with a count while anything runs, the list on click. */
 function JobsButton() {
@@ -77,7 +100,10 @@ export function TitleBar({ project }: { project: Project | null }) {
   const connected = useLive((s) => s.connected)
   const inEditor = ui.route.kind === 'editor'
   return (
-    <header className="flex h-11 shrink-0 select-none items-stretch border-b">
+    <header
+      className="flex h-11 shrink-0 select-none items-stretch border-b"
+      data-tauri-drag-region={customWindow || undefined}
+    >
       <div
         className={cn(
           'flex shrink-0 items-center gap-1 pr-2 pl-3',
@@ -94,7 +120,10 @@ export function TitleBar({ project }: { project: Project | null }) {
             <ArrowLeft />
           </Button>
         ) : null}
-        <span className="mr-auto px-1 text-sm font-semibold tracking-tight">
+        <span
+          className="mr-auto px-1 text-sm font-semibold tracking-tight"
+          data-tauri-drag-region={customWindow || undefined}
+        >
           Shot<span className="text-brand">beam</span>
         </span>
         {!inEditor ? (
@@ -113,13 +142,56 @@ export function TitleBar({ project }: { project: Project | null }) {
           </Tooltip>
         ) : null}
       </div>
-      <div className="flex min-w-0 flex-1 items-center gap-2 px-3">
-        <span className="truncate text-[13px] text-muted-foreground">{project?.name}</span>
+      <div
+        className="flex min-w-0 flex-1 items-center gap-2 px-3"
+        data-tauri-drag-region={customWindow || undefined}
+      >
+        <div className="flex items-center gap-0.5">
+          <Tip label="Назад" combo={{ code: 'ArrowLeft', alt: true }}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={ui.goBack}
+              disabled={!ui.back.length}
+              aria-label="Назад"
+            >
+              <ArrowLeft />
+            </Button>
+          </Tip>
+          <Tip label="Вперёд" combo={{ code: 'ArrowRight', alt: true }}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={ui.goForward}
+              disabled={!ui.forward.length}
+              aria-label="Вперёд"
+            >
+              <ArrowRight />
+            </Button>
+          </Tip>
+        </div>
+        <span
+          className="truncate text-[13px] text-muted-foreground"
+          data-tauri-drag-region={customWindow || undefined}
+        >
+          {project?.name}
+        </span>
         <div className="ml-auto flex items-center gap-1">
           {!connected ? <span className="text-xs text-destructive">движок не отвечает</span> : null}
+          <Tip label="Горячие клавиши" combo={{ code: 'Slash', mod: true }}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => ui.setShortcutsOpen(true)}
+              aria-label="Горячие клавиши"
+            >
+              <Keyboard />
+            </Button>
+          </Tip>
           <JobsButton />
         </div>
       </div>
+      <WindowControls />
     </header>
   )
 }

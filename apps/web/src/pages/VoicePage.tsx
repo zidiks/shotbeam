@@ -14,6 +14,7 @@ import {
   StatusDot,
   Textarea,
 } from '../components/common'
+import { VoiceMenu } from '../components/menus'
 import { api, engineUrl, mediaUrl } from '../lib/api'
 import { useLive } from '../lib/events'
 import { timecode } from '../lib/format'
@@ -38,9 +39,20 @@ const LANGS = [
   { value: 'pt', label: 'Português' },
 ]
 
+const READING_SAMPLE = `Привет! Сейчас я записываю свой голос для будущих видео. Мне хочется, чтобы речь звучала естественно: спокойно, уверенно и с живой интонацией.
+
+Сегодня утром я открыл окно. За стеклом шумели деревья, проехал автобус, а где-то во дворе весело засмеялись дети. На столе остывал чай с лимоном. Обычный день, но сколько в нём звуков и маленьких деталей!
+
+А теперь представь: у тебя появилась интересная идея. С чего начать? С первого шага. Запиши пару мыслей, выбери лучший кадр и расскажи свою историю. Не спеши. Сделай паузу, вдохни и продолжай.
+
+Иногда я говорю тише, когда делюсь чем-то личным. Иногда — громче и с радостью: вот это получилось здорово! Бывает, я сомневаюсь: а что, если попробовать иначе? Затем нахожу решение и объясняю его простыми словами.
+
+В четверг, в половине девятого, мы встретились у небольшого книжного магазина. Я купил три книги, цветной блокнот и жёлтый карандаш. Впереди ещё много планов, новых встреч и удивительных открытий. Давай начнём!`
+
 /** Records the microphone and uploads it to the engine; gives back the file path. */
 function useRecorder(onDone: (path: string) => void) {
   const [recording, setRecording] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [seconds, setSeconds] = useState(0)
   const rec = useRef<MediaRecorder | null>(null)
   const timer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -54,13 +66,21 @@ function useRecorder(onDone: (path: string) => void) {
       r.ondataavailable = (e) => chunks.push(e.data)
       r.onstop = async () => {
         for (const t of stream.getTracks()) t.stop()
-        const blob = new Blob(chunks, { type: r.mimeType })
-        const res = await fetch(engineUrl('/api/uploads?name=voice-sample.webm'), {
-          method: 'POST',
-          body: blob,
-        })
-        const { path } = (await res.json()) as { path: string }
-        onDone(path)
+        setUploading(true)
+        try {
+          const blob = new Blob(chunks, { type: r.mimeType })
+          const res = await fetch(engineUrl('/api/uploads?name=voice-sample.webm'), {
+            method: 'POST',
+            body: blob,
+          })
+          if (!res.ok) throw new Error('Не удалось сохранить запись. Попробуй ещё раз.')
+          const { path } = (await res.json()) as { path: string }
+          onDone(path)
+        } catch (err) {
+          errorToast(err)
+        } finally {
+          setUploading(false)
+        }
       }
       r.start()
       rec.current = r
@@ -79,10 +99,15 @@ function useRecorder(onDone: (path: string) => void) {
   useEffect(
     () => () => {
       if (timer.current) clearInterval(timer.current)
+      if (rec.current) {
+        rec.current.onstop = null
+        if (rec.current.state !== 'inactive') rec.current.stop()
+        for (const track of rec.current.stream.getTracks()) track.stop()
+      }
     },
     [],
   )
-  return { recording, seconds, start, stop }
+  return { recording, uploading, seconds, start, stop }
 }
 
 function CloneVoice() {
@@ -91,6 +116,7 @@ function CloneVoice() {
   const [provider, setProvider] = useState<VoiceProviderId>('fish-api')
   const [samplePath, setSamplePath] = useState('')
   const [sampleText, setSampleText] = useState('')
+  const [reading, setReading] = useState<'suggested' | 'own'>('suggested')
   const [jobId, setJobId] = useState<string | null>(null)
   const job = useLive((s) => (jobId ? s.jobs[jobId] : undefined))
   const recorder = useRecorder((path) => {
@@ -136,11 +162,47 @@ function CloneVoice() {
             />
           </Field>
         </div>
+        <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium">Что читать при записи</p>
+            <Segmented
+              value={reading}
+              onChange={setReading}
+              options={[
+                { value: 'suggested', label: 'Готовый текст' },
+                { value: 'own', label: 'Своя речь' },
+              ]}
+            />
+          </div>
+          {reading === 'suggested' ? (
+            <>
+              <p className="text-xs text-muted-foreground">
+                Примерно 1–2 минуты. Прочитай вслух своим обычным голосом, с естественными паузами.
+                Держи микрофон на одном расстоянии, избегай эха и фонового шума.
+              </p>
+              <p
+                className="max-h-60 overflow-y-auto whitespace-pre-line pr-2 text-sm leading-relaxed"
+                data-selectable
+              >
+                {READING_SAMPLE}
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Расскажи о своём дне или прочитай отрывок на нужном языке. Меняй интонацию
+              естественно, без шёпота и крика.
+            </p>
+          )}
+        </div>
         <Field label="Образец" hint="Запиши с микрофона или укажи путь к файлу (аудио или видео).">
           <div className="flex gap-2">
             <Input
               value={samplePath}
-              onChange={(e) => setSamplePath(e.target.value)}
+              disabled={recorder.recording || recorder.uploading}
+              onChange={(e) => {
+                setSamplePath(e.target.value)
+                setSampleText('')
+              }}
               placeholder="D:\Записи\мой-голос.wav"
             />
             {recorder.recording ? (
@@ -152,7 +214,15 @@ function CloneVoice() {
                 {timecode(recorder.seconds, true)}
               </Button>
             ) : (
-              <Button variant="outline" onClick={recorder.start}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSamplePath('')
+                  setSampleText('')
+                  void recorder.start()
+                }}
+                loading={recorder.uploading}
+              >
                 <Mic />
                 Записать
               </Button>
@@ -161,11 +231,22 @@ function CloneVoice() {
         </Field>
         <Field label="Что сказано в образце" hint="Необязательно: если пусто, распознаю сам.">
           <Textarea rows={2} value={sampleText} onChange={(e) => setSampleText(e.target.value)} />
+          {reading === 'suggested' ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="mt-1"
+              disabled={!samplePath || recorder.recording || recorder.uploading}
+              onClick={() => setSampleText(READING_SAMPLE)}
+            >
+              Прочитал текст целиком — заполнить расшифровку
+            </Button>
+          ) : null}
         </Field>
         <div className="flex items-center gap-3">
           <Button
             variant="brand"
-            disabled={!samplePath || !name.trim()}
+            disabled={!samplePath || !name.trim() || recorder.recording || recorder.uploading}
             onClick={() => create.mutate()}
             loading={create.isPending || job?.status === 'running' || job?.status === 'queued'}
           >
@@ -316,30 +397,32 @@ function VoiceList() {
     <Section title="Голоса">
       <ul className="divide-y">
         {voices.map((v: Voice) => (
-          <li key={v.id} className="flex items-center gap-3 py-2">
-            <span className="font-medium">{v.name}</span>
-            <span className="text-xs text-muted-foreground">
-              {v.provider} · {v.language}
-            </span>
-            {v.sample ? (
-              // biome-ignore lint/a11y/useMediaCaption: a voice sample
-              <audio
-                controls
-                src={engineUrl(`/api/voices/${v.id}/sample`)}
-                className="ml-auto h-8"
-              />
-            ) : (
-              <span className="ml-auto" />
-            )}
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={() => confirm(`Удалить голос «${v.name}»?`) && remove.mutate(v.id)}
-              aria-label="Удалить"
-            >
-              <Trash2 />
-            </Button>
-          </li>
+          <VoiceMenu key={v.id} voice={v}>
+            <li key={v.id} className="flex items-center gap-3 py-2">
+              <span className="font-medium">{v.name}</span>
+              <span className="text-xs text-muted-foreground">
+                {v.provider} · {v.language}
+              </span>
+              {v.sample ? (
+                // biome-ignore lint/a11y/useMediaCaption: a voice sample
+                <audio
+                  controls
+                  src={engineUrl(`/api/voices/${v.id}/sample`)}
+                  className="ml-auto h-8"
+                />
+              ) : (
+                <span className="ml-auto" />
+              )}
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={() => confirm(`Удалить голос «${v.name}»?`) && remove.mutate(v.id)}
+                aria-label="Удалить"
+              >
+                <Trash2 />
+              </Button>
+            </li>
+          </VoiceMenu>
         ))}
       </ul>
     </Section>

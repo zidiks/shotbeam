@@ -828,6 +828,25 @@ Pass version (from get_composition) to avoid overwriting the user's edits made m
       }),
   )
 
+  for (const direction of ['undo', 'redo'] as const) {
+    server.registerTool(
+      `${direction}_composition`,
+      {
+        title: direction === 'undo' ? 'Undo the last edit' : 'Redo an undone edit',
+        description:
+          direction === 'undo'
+            ? "Takes back the last edit of a video (yours or the user's in the editor). Repeat to go further back."
+            : 'Brings back an edit undone with undo_composition.',
+        inputSchema: { id: z.string() },
+      },
+      ({ id }) =>
+        run(async () => {
+          const c = await api.post<Composition>(`/api/compositions/${id}/${direction}`)
+          return compositionText(c, await assetNames(c))
+        }),
+    )
+  }
+
   server.registerTool(
     'add_captions',
     {

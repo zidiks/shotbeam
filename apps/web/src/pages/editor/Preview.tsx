@@ -80,9 +80,11 @@ function ClipLayer({
   })
   return (
     <div
+      data-item-id={item.id}
       className="absolute inset-0 overflow-hidden"
       style={{
         opacity: active ? fadeOpacity(time, item.start, end, item.fadeIn, item.fadeOut) : 0,
+        pointerEvents: active ? 'auto' : 'none',
       }}
     >
       <video
@@ -124,7 +126,10 @@ function MotionLayer({
   })
   if (!item.renderedAssetId) {
     return active ? (
-      <div className="absolute inset-[8%] flex items-center justify-center rounded-xl border-2 border-dashed border-white/50 bg-black/40 text-center text-white">
+      <div
+        data-item-id={item.id}
+        className="absolute inset-[8%] flex items-center justify-center rounded-xl border-2 border-dashed border-white/50 bg-black/40 text-center text-white"
+      >
         <div>
           <p className="text-[4cqw] font-semibold">{item.template}</p>
           <p className="text-[2.6cqw] opacity-75">{item.engine} · отрендерится вместе с видео</p>
@@ -139,8 +144,9 @@ function MotionLayer({
       muted
       playsInline
       preload="auto"
+      data-item-id={item.id}
       className="absolute inset-0 size-full object-contain"
-      style={{ opacity: active ? 1 : 0 }}
+      style={{ opacity: active ? 1 : 0, pointerEvents: active ? 'auto' : 'none' }}
     />
   )
 }
@@ -205,6 +211,7 @@ function TextLayer({
   const size = st.size * k
   return (
     <div
+      data-item-id={item.id}
       className="absolute whitespace-pre-wrap"
       style={{
         left: `${st.x * 100}%`,
@@ -250,6 +257,7 @@ function CaptionsLayer({
   const size = st.size * k
   return (
     <div
+      data-item-id={item.id}
       className="absolute w-[90%] text-center"
       style={{
         left: '50%',
@@ -298,6 +306,7 @@ function CaptionsLayer({
 export function Preview({ composition }: { composition: Composition }) {
   const time = useEditor((s) => s.time)
   const playing = useEditor((s) => s.playing)
+  const selected = useEditor((s) => s.selected)
   const fonts = useLibraryFonts()
   const box = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -316,14 +325,33 @@ export function Preview({ composition }: { composition: Composition }) {
   }, [composition.width, composition.height])
 
   const k = size.w / composition.width
+
+  /**
+   * Selects what is under the pointer: the topmost item there; clicking the same spot again
+   * goes one layer down (to reach a clip under a full-frame overlay).
+   */
+  const selectAt = (x: number, y: number) => {
+    const ids: string[] = []
+    for (const el of document.elementsFromPoint(x, y)) {
+      const id = (el as HTMLElement).closest<HTMLElement>('[data-item-id]')?.dataset.itemId
+      if (id && !ids.includes(id)) ids.push(id)
+    }
+    const { selected, select } = useEditor.getState()
+    if (!ids.length) return select(null)
+    const at = selected ? ids.indexOf(selected) : -1
+    select(ids[(at + 1) % ids.length] ?? null)
+  }
   // Mounted from a few seconds before an item starts until a moment after it ends.
   const near = (start: number, end: number) =>
     time >= start - PRELOAD_AFTER && time < end + PRELOAD_BEFORE
 
   return (
     <div ref={box} className="flex size-full items-center justify-center">
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: selecting by pointer; the timeline does it by keyboard */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: the frame is a pointer surface */}
       <div
-        className="relative overflow-hidden rounded-md shadow-float"
+        className="relative cursor-pointer overflow-hidden rounded-md shadow-float"
+        onClick={(e) => selectAt(e.clientX, e.clientY)}
         style={{
           width: size.w,
           height: size.h,
@@ -331,6 +359,9 @@ export function Preview({ composition }: { composition: Composition }) {
           containerType: 'inline-size',
         }}
       >
+        {selected ? (
+          <style>{`[data-item-id="${selected}"] { outline: 2px solid var(--color-brand); outline-offset: -2px; }`}</style>
+        ) : null}
         {/* Paint order: visual tracks from the bottom one (V1) up, later items over earlier. */}
         {[
           ...composition.tracks.filter((t) => t.kind === 'visual').reverse(),

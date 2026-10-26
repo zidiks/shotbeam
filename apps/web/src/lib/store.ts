@@ -22,7 +22,14 @@ interface UiState {
   projectId: string | null
   theme: Theme
   sidebarOpen: boolean
+  /** Screens visited before / after the current one (Alt+←/→, the arrows in the title bar). */
+  back: Route[]
+  forward: Route[]
+  shortcutsOpen: boolean
   navigate: (route: Route) => void
+  goBack: () => void
+  goForward: () => void
+  setShortcutsOpen: (open: boolean) => void
   setProject: (id: string | null) => void
   setTheme: (t: Theme) => void
   toggleSidebar: () => void
@@ -52,6 +59,12 @@ export function applyTheme(theme: Theme) {
   } catch {}
 }
 
+const HISTORY = 50
+
+function sameRoute(a: Route, b: Route) {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
 export const useUi = create<UiState>((set) => ({
   route: load<Route>('shotbeam.route', { kind: 'media' }),
   projectId: load<string | null>('shotbeam.project', null),
@@ -63,10 +76,32 @@ export const useUi = create<UiState>((set) => ({
     }
   })(),
   sidebarOpen: true,
+  back: [],
+  forward: [],
+  shortcutsOpen: false,
   navigate: (route) => {
     save('shotbeam.route', route)
-    set({ route })
+    set((s) =>
+      sameRoute(s.route, route)
+        ? { route }
+        : { route, back: [...s.back, s.route].slice(-HISTORY), forward: [] },
+    )
   },
+  goBack: () =>
+    set((s) => {
+      const route = s.back[s.back.length - 1]
+      if (!route) return s
+      save('shotbeam.route', route)
+      return { route, back: s.back.slice(0, -1), forward: [s.route, ...s.forward] }
+    }),
+  goForward: () =>
+    set((s) => {
+      const [route, ...rest] = s.forward
+      if (!route) return s
+      save('shotbeam.route', route)
+      return { route, back: [...s.back, s.route], forward: rest }
+    }),
+  setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   setProject: (projectId) => {
     save('shotbeam.project', projectId)
     set({ projectId })

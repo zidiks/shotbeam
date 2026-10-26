@@ -5,6 +5,7 @@ import { CircleAlert, Link2, RotateCcw, Sparkles, Trash2, X } from 'lucide-react
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Empty, PageHeader, Progress, Textarea } from '../components/common'
+import { ReferenceMenu } from '../components/menus'
 import { api, engineUrl, mediaUrl } from '../lib/api'
 import { useJobFor } from '../lib/events'
 import { timecode } from '../lib/format'
@@ -304,12 +305,20 @@ export function ReferencesPage({ project, id }: { project: Project; id?: string 
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3 px-6 pb-8">
             {refs.map((r) => (
-              <ReferenceCard
+              <ReferenceMenu
                 key={r.id}
-                r={r}
-                selected={r.id === id}
-                onClick={() => navigate({ kind: 'references', id: r.id === id ? undefined : r.id })}
-              />
+                reference={r}
+                onOpen={() => navigate({ kind: 'references', id: r.id })}
+                onDeleted={() => r.id === id && navigate({ kind: 'references' })}
+              >
+                <ReferenceCard
+                  r={r}
+                  selected={r.id === id}
+                  onClick={() =>
+                    navigate({ kind: 'references', id: r.id === id ? undefined : r.id })
+                  }
+                />
+              </ReferenceMenu>
             ))}
           </div>
         )}

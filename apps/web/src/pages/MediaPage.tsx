@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import { AssetCard } from '../components/AssetCard'
 import { AssetPanel } from '../components/AssetPanel'
 import { Choice, Empty, Field, PageHeader } from '../components/common'
+import { AssetMenu, SourceMenu } from '../components/menus'
 import { api } from '../lib/api'
 import { ROLE_LABEL } from '../lib/format'
 import { errorToast, useAssets, useSources } from '../lib/queries'
@@ -133,39 +134,40 @@ function SourcesBar({ project }: { project: Project }) {
   return (
     <div className="flex flex-wrap gap-2 px-6 pb-3">
       {sources.map((s) => (
-        <div
-          key={s.id}
-          className="group flex h-8 items-center gap-2 rounded-md border bg-card pr-1 pl-2.5 text-[13px]"
-          title={s.path}
-        >
-          <FolderOpen className="size-3.5 text-muted-foreground" />
-          <span className="max-w-56 truncate">{s.name}</span>
-          <span className="text-xs text-muted-foreground">
-            {ROLE_LABEL[s.role]}
-            {s.projectId ? '' : ' · общая'}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="size-6"
-            onClick={() => scan.mutate(s.id)}
-            aria-label="Пересканировать"
+        <SourceMenu key={s.id} source={s}>
+          <div
+            className="group flex h-8 items-center gap-2 rounded-md border bg-card pr-1 pl-2.5 text-[13px]"
+            title={s.path}
           >
-            <RefreshCw className="size-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="size-6 opacity-0 group-hover:opacity-100"
-            onClick={() => {
-              if (confirm(`Отключить папку «${s.name}»? Файлы останутся на диске.`))
-                remove.mutate(s.id)
-            }}
-            aria-label="Отключить"
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
-        </div>
+            <FolderOpen className="size-3.5 text-muted-foreground" />
+            <span className="max-w-56 truncate">{s.name}</span>
+            <span className="text-xs text-muted-foreground">
+              {ROLE_LABEL[s.role]}
+              {s.projectId ? '' : ' · общая'}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="size-6"
+              onClick={() => scan.mutate(s.id)}
+              aria-label="Пересканировать"
+            >
+              <RefreshCw className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="size-6 opacity-0 group-hover:opacity-100"
+              onClick={() => {
+                if (confirm(`Отключить папку «${s.name}»? Файлы останутся на диске.`))
+                  remove.mutate(s.id)
+              }}
+              aria-label="Отключить"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+        </SourceMenu>
       ))}
     </div>
   )
@@ -243,14 +245,20 @@ export function MediaPage({ project, assetId }: { project: Project; assetId?: st
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3 px-6 pb-8">
             {items.map((a) => (
-              <AssetCard
+              <AssetMenu
                 key={a.id}
                 asset={a}
-                selected={a.id === assetId}
-                onClick={() =>
-                  navigate({ kind: 'media', assetId: a.id === assetId ? undefined : a.id })
-                }
-              />
+                onOpen={() => navigate({ kind: 'media', assetId: a.id })}
+                onDeleted={() => a.id === assetId && navigate({ kind: 'media' })}
+              >
+                <AssetCard
+                  asset={a}
+                  selected={a.id === assetId}
+                  onClick={() =>
+                    navigate({ kind: 'media', assetId: a.id === assetId ? undefined : a.id })
+                  }
+                />
+              </AssetMenu>
             ))}
           </div>
         )}

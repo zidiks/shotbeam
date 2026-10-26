@@ -78,7 +78,7 @@ export class Compositions {
   }
 
   /** Applies edits atomically; `expectVersion` guards against overwriting someone else's edit. */
-  apply(id: string, ops: CompositionOp[], expectVersion?: number) {
+  apply(id: string, ops: CompositionOp[], expectVersion?: number, opts: { history?: 'skip' } = {}) {
     const current = this.store.getComposition(id)
     if (expectVersion !== undefined && current.version !== expectVersion) {
       throw Object.assign(
@@ -98,7 +98,7 @@ export class Compositions {
       }
     }
     const { composition, created } = applyOps(current, ops)
-    const saved = this.store.saveComposition(composition, current.version)
+    const saved = this.store.saveComposition(composition, current.version, opts)
     return { composition: saved, created }
   }
 
@@ -215,7 +215,9 @@ export class Compositions {
       progress,
       signal,
     )
-    this.apply(id, [{ op: 'update', id: itemId, patch: { renderedAssetId: assetId } }])
+    this.apply(id, [{ op: 'update', id: itemId, patch: { renderedAssetId: assetId } }], undefined, {
+      history: 'skip',
+    })
     return assetId
   }
 

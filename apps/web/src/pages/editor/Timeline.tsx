@@ -2,10 +2,11 @@ import type { Asset, Composition, CompositionOp, Item, Track } from '@shotbeam/c
 import { compositionDuration, isFree, itemEnd, TRACK_ITEMS, trackLabel } from '@shotbeam/core'
 import { Button, cn, Tooltip, TooltipContent, TooltipTrigger } from '@shotbeam/ui'
 import { Eye, EyeOff, Layers, Magnet, Plus, Volume2, VolumeX, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { api } from '../../lib/api'
 import { timecode } from '../../lib/format'
 import { useEditor } from './state'
+import { TimelineItemMenu } from './TimelineItemMenu'
 
 /*
  * Timeline-lite, laid out like any editor: visual tracks on top (V1 is the main one, higher ones
@@ -50,14 +51,6 @@ const COLORS: Record<string, string> = {
   text: 'bg-amber-500/85 border-amber-200/70',
   captions: 'bg-yellow-400/85 border-yellow-100/70 text-black',
   motion: 'bg-pink-500/80 border-pink-200/60',
-}
-
-function loadMagnet() {
-  try {
-    return localStorage.getItem('shotbeam.magnet') !== '0'
-  } catch {
-    return true
-  }
 }
 
 /** The item after a raw drag (seconds already snapped), before collisions. */
@@ -164,16 +157,11 @@ export function Timeline({
 }) {
   const { time, zoom, selected, setTime, select, setZoom } = useEditor()
   const [drag, setDrag] = useState<Drag | null>(null)
-  const [magnet, setMagnet] = useState(loadMagnet)
+  const magnet = useEditor((s) => s.magnet)
+  const setMagnet = useEditor((s) => s.setMagnet)
   const lanes = useRef<HTMLDivElement>(null)
   const duration = compositionDuration(composition)
   const width = Math.max(duration + 10, 30) * zoom
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('shotbeam.magnet', magnet ? '1' : '0')
-    } catch {}
-  }, [magnet])
 
   const maxOut = (id: string) => assets.get(id)?.duration ?? Number.POSITIVE_INFINITY
   const trackOf = (id: string) => composition.tracks.find((t) => t.id === id) as Track
@@ -354,7 +342,7 @@ export function Timeline({
                 'h-7 gap-1 px-2 text-xs',
                 magnet ? 'text-brand aria-pressed:text-brand' : '',
               )}
-              onClick={() => setMagnet((m) => !m)}
+              onClick={() => setMagnet(!magnet)}
             >
               {magnet ? <Magnet className="size-3.5" /> : <Layers className="size-3.5" />}
               {magnet ? 'Магнит' : 'Наложение'}
@@ -510,34 +498,45 @@ export function Timeline({
                         ? COLORS.music
                         : COLORS[i.type]
                     return (
-                      <div
+                      <TimelineItemMenu
                         key={i.id}
-                        className={cn(
-                          'absolute top-1 bottom-1 flex cursor-grab items-center overflow-hidden rounded-md border text-[11px] font-medium text-white shadow-sm active:cursor-grabbing',
-                          color,
-                          selected === i.id && 'ring-2 ring-foreground',
-                          covers &&
-                            'outline-2 outline-dashed outline-offset-[-2px] outline-white/90',
-                          dragging && 'z-10 opacity-90',
-                        )}
-                        style={{
-                          left: shown.start * zoom,
-                          width: Math.max(4, (itemEnd(shown) - shown.start) * zoom),
-                        }}
-                        title={covers ? 'Лежит поверх соседнего элемента' : undefined}
-                        onPointerDown={(e) => onItemDown(e, 'move', i, t)}
+                        item={i}
+                        track={t}
+                        asset={
+                          i.type === 'clip' || i.type === 'audio'
+                            ? assets.get(i.assetId)
+                            : undefined
+                        }
+                        apply={apply}
                       >
-                        <span
-                          className="absolute inset-y-0 left-0 w-2 cursor-ew-resize hover:bg-white/30"
-                          onPointerDown={(e) => onItemDown(e, 'trim-start', i, t)}
-                        />
-                        {covers ? <Layers className="ml-2 size-3 shrink-0" /> : null}
-                        <span className="truncate px-2.5">{label(i)}</span>
-                        <span
-                          className="absolute inset-y-0 right-0 w-2 cursor-ew-resize hover:bg-white/30"
-                          onPointerDown={(e) => onItemDown(e, 'trim-end', i, t)}
-                        />
-                      </div>
+                        <div
+                          className={cn(
+                            'absolute top-1 bottom-1 flex cursor-grab items-center overflow-hidden rounded-md border text-[11px] font-medium text-white shadow-sm active:cursor-grabbing',
+                            color,
+                            selected === i.id && 'ring-2 ring-foreground',
+                            covers &&
+                              'outline-2 outline-dashed outline-offset-[-2px] outline-white/90',
+                            dragging && 'z-10 opacity-90',
+                          )}
+                          style={{
+                            left: shown.start * zoom,
+                            width: Math.max(4, (itemEnd(shown) - shown.start) * zoom),
+                          }}
+                          title={covers ? 'Лежит поверх соседнего элемента' : undefined}
+                          onPointerDown={(e) => onItemDown(e, 'move', i, t)}
+                        >
+                          <span
+                            className="absolute inset-y-0 left-0 w-2 cursor-ew-resize hover:bg-white/30"
+                            onPointerDown={(e) => onItemDown(e, 'trim-start', i, t)}
+                          />
+                          {covers ? <Layers className="ml-2 size-3 shrink-0" /> : null}
+                          <span className="truncate px-2.5">{label(i)}</span>
+                          <span
+                            className="absolute inset-y-0 right-0 w-2 cursor-ew-resize hover:bg-white/30"
+                            onPointerDown={(e) => onItemDown(e, 'trim-end', i, t)}
+                          />
+                        </div>
+                      </TimelineItemMenu>
                     )
                   })}
               </div>

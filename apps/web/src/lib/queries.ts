@@ -183,6 +183,29 @@ export const useFonts = () =>
     queryFn: () => api.get<{ file: string; family: string }[]>('/api/fonts'),
   })
 
+/** How many edits can be undone / redone (kept by the engine, Claude's edits included). */
+export const useCompositionHistory = (id: string) =>
+  useQuery({
+    queryKey: ['composition', 'history', id],
+    queryFn: () => api.get<{ undo: number; redo: number }>(`/api/compositions/${id}/history`),
+  })
+
+export function useUndoRedo(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (direction: 'undo' | 'redo') =>
+      api.post<Composition>(`/api/compositions/${id}/${direction}`),
+    onSuccess: (c) => {
+      qc.setQueryData(keys.composition(id), c)
+      qc.invalidateQueries({ queryKey: ['composition', 'history', id] })
+    },
+    onError: (err) => {
+      // An empty history is not an error worth a toast.
+      if (!/Nothing to (undo|redo)/.test(String((err as Error).message))) errorToast(err)
+    },
+  })
+}
+
 /** Edits of a composition: applied on the engine (validated there), the result replaces the cache. */
 export function useCompositionOps(id: string) {
   const qc = useQueryClient()

@@ -1,5 +1,6 @@
+import { spawn } from 'node:child_process'
 import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import {
@@ -21,6 +22,7 @@ import type { Engine } from './engine'
 import { frameAt } from './media/ffmpeg'
 import { mimeOf } from './media/kinds'
 import type { PythonFeature } from './python'
+import { assetUsage, deleteAsset, deleteReference, deleteVoice } from './removal'
 
 /*
  * The engine's HTTP API (localhost only). JSON in and out; media files with Range support so the
@@ -91,6 +93,20 @@ export function createApp(engine: Engine) {
     const path = join(dir, `${Date.now().toString(36)}-${name}`)
     writeFileSync(path, Buffer.from(await c.req.arrayBuffer()))
     return c.json({ path }, 201)
+  })
+
+  // Shows a file or folder in Explorer / Finder (the engine runs on this computer).
+  app.post('/api/reveal', async (c) => {
+    const { path } = await body(c, z.object({ path: z.string().min(1) }))
+    if (!existsSync(path)) return c.json({ error: 'Файл не найден' }, 404)
+    const [cmd, args] =
+      process.platform === 'win32'
+        ? ['explorer.exe', [`/select,${path}`]]
+        : process.platform === 'darwin'
+          ? ['open', ['-R', path]]
+          : ['xdg-open', [dirname(path)]]
+    spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref()
+    return c.json({ ok: true })
   })
 
   // Health and setup
@@ -243,14 +259,11 @@ export function createApp(engine: Engine) {
     return c.json(indexer.transcribe(c.req.param('id'), language))
   })
   app.post('/api/assets/:id/beats', (c) => c.json(indexer.beats(c.req.param('id'))))
+  app.get('/api/assets/:id/usage', (c) =>
+    c.json({ compositions: assetUsage(store, c.req.param('id')) }),
+  )
   app.delete('/api/assets/:id', (c) => {
-    const asset = store.getAsset(c.req.param('id'))
-    if (asset.sourceId)
-      return c.json(
-        { error: 'Files from a source folder leave when the file is removed there' },
-        400,
-      )
-    store.deleteAsset(asset.id)
+    deleteAsset(engine.library, store, c.req.param('id'), c.req.query('force') === '1')
     return c.json({ ok: true })
   })
 
@@ -325,7 +338,7 @@ export function createApp(engine: Engine) {
   })
   app.post('/api/references/:id/retry', (c) => c.json(references.download(c.req.param('id'))))
   app.delete('/api/references/:id', (c) => {
-    store.deleteReference(c.req.param('id'))
+    deleteReference(engine.library, store, c.req.param('id'))
     return c.json({ ok: true })
   })
   app.get('/api/references/:id/thumb', (c) => {
@@ -408,7 +421,7 @@ export function createApp(engine: Engine) {
     return c.json(voices.create({ ...input, samplePath }).job, 201)
   })
   app.delete('/api/voices/:id', (c) => {
-    store.deleteVoice(c.req.param('id'))
+    deleteVoice(engine.library, store, c.req.param('id'))
     return c.json({ ok: true })
   })
   app.get('/api/voices/:id/sample', (c) => {
@@ -492,6 +505,26 @@ export function createApp(engine: Engine) {
     return c.json(compositions.create(input), 201)
   })
   app.get('/api/compositions/:id', (c) => c.json(store.getComposition(c.req.param('id'))))
+  app.post('/api/compositions/:id/duplicate', (c) => {
+    const src = store.getComposition(c.req.param('id'))
+    const now = new Date().toISOString()
+    const copy = store.saveComposition({
+      ...src,
+      id: crypto.randomUUID().replace(/-/g, '').slice(0, 12),
+      name: `${src.name} (копия)`,
+      version: 0,
+      createdAt: now,
+      updatedAt: now,
+    })
+    return c.json(copy, 201)
+  })
+  app.get('/api/compositions/:id/history', (c) => c.json(store.history(c.req.param('id'))))
+  app.post('/api/compositions/:id/undo', (c) =>
+    c.json(store.stepHistory(c.req.param('id'), 'undo')),
+  )
+  app.post('/api/compositions/:id/redo', (c) =>
+    c.json(store.stepHistory(c.req.param('id'), 'redo')),
+  )
   app.post('/api/compositions/:id/ops', async (c) => {
     const input = await body(
       c,

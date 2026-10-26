@@ -5,6 +5,7 @@ import { useMutation } from '@tanstack/react-query'
 import { Film, Play, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Choice, Empty, Field, PageHeader, Segmented } from '../components/common'
+import { CompositionMenu } from '../components/menus'
 import { api, mediaUrl } from '../lib/api'
 import { timecode } from '../lib/format'
 import { errorToast, useAssets, useCompositions, useFormats } from '../lib/queries'
@@ -133,33 +134,32 @@ export function VideosPage({ project }: { project: Project }) {
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3 px-6">
           {comps.map((c) => (
-            <div
-              key={c.id}
-              className="group relative rounded-lg border bg-card p-4 transition-colors hover:border-ring/60"
-            >
-              <button
-                type="button"
-                className="block w-full text-left"
-                onClick={() => navigate({ kind: 'editor', id: c.id })}
-              >
-                <p className="truncate font-medium">{c.name}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {c.width}×{c.height} · {timecode(compositionDuration(c))} · v{c.version}
-                </p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {c.tracks.reduce((n, t) => n + t.items.length, 0)} элементов
-                </p>
-              </button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="absolute top-3 right-3 opacity-0 group-hover:opacity-100"
-                onClick={() => confirm(`Удалить «${c.name}»?`) && remove.mutate(c.id)}
-                aria-label="Удалить"
-              >
-                <Trash2 />
-              </Button>
-            </div>
+            <CompositionMenu key={c.id} composition={c}>
+              <div className="group relative rounded-lg border bg-card p-4 transition-colors hover:border-ring/60">
+                <button
+                  type="button"
+                  className="block w-full text-left"
+                  onClick={() => navigate({ kind: 'editor', id: c.id })}
+                >
+                  <p className="truncate font-medium">{c.name}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {c.width}×{c.height} · {timecode(compositionDuration(c))} · v{c.version}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {c.tracks.reduce((n, t) => n + t.items.length, 0)} элементов
+                  </p>
+                </button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="absolute top-3 right-3 opacity-0 group-hover:opacity-100"
+                  onClick={() => confirm(`Удалить «${c.name}»?`) && remove.mutate(c.id)}
+                  aria-label="Удалить"
+                >
+                  <Trash2 />
+                </Button>
+              </div>
+            </CompositionMenu>
           ))}
         </div>
       )}
