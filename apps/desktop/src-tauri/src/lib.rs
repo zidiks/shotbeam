@@ -10,7 +10,7 @@ use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use tauri::{Manager, RunEvent};
+use tauri::{Manager, RunEvent, WebviewWindowBuilder};
 
 const ENGINE_PORT: u16 = 47811;
 
@@ -28,6 +28,23 @@ fn repo_root() -> PathBuf {
     std::env::var_os("SHOTBEAM_REPO")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join(".."))
+}
+
+/// The library folder, found the way the engine finds it: SHOTBEAM_HOME, else `home` in
+/// ~/.shotbeam.json, else ~/Shotbeam.
+fn library_root() -> PathBuf {
+    if let Some(home) = std::env::var_os("SHOTBEAM_HOME") {
+        return PathBuf::from(home);
+    }
+    let user = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let pointer = std::fs::read_to_string(user.join(".shotbeam.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("home").and_then(|h| h.as_str()).map(PathBuf::from));
+    pointer.unwrap_or_else(|| user.join("Shotbeam"))
 }
 
 fn start_engine() -> Option<Child> {
@@ -59,6 +76,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             app.manage(EngineProcess(Mutex::new(start_engine())));
+            // WebView2 keeps its cache and storage in the library too, not on the (small)
+            // system drive, where a full disk shows up as ERR_CACHE_READ_FAILURE and a blank window.
+            let config = app
+                .config()
+                .app
+                .windows
+                .first()
+                .cloned()
+                .expect("tauri.conf.json defines the main window");
+            WebviewWindowBuilder::from_config(app.handle(), &config)?
+                .data_directory(library_root().join("webview"))
+                .build()?;
             Ok(())
         })
         .build(tauri::generate_context!())

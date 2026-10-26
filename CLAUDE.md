@@ -15,7 +15,9 @@ Read docs/CONCEPT.md first (what this is and what was decided). Local-first: no 
 - `apps/mcp` — stdio MCP server, a thin client of the engine (starts it when nothing answers).
   Entry for clients: `node apps/mcp/bin/shotbeam-mcp.mjs`.
 - `apps/web` — React UI (Vite, port 5180), TanStack Query + SSE invalidation, zustand for UI state.
-- `apps/desktop` — Tauri 2 shell: opens apps/web, starts the engine from this checkout.
+- `apps/desktop` — Tauri 2 shell: opens apps/web, starts the engine from this checkout. The
+  window is created in Rust with its WebView2 data in `<library>/webview` (not on C:); Vite dev
+  serves modules `no-store` so a broken WebView cache cannot blank the window.
 
 ## Conventions
 
