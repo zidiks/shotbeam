@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Shotbeam",
+  "version": "0.1.0",
+  "identifier": "app.shotbeam.studio",
+  "build": {
+    "beforeDevCommand": "pnpm --filter @shotbeam/web dev",
+    "devUrl": "http://localhost:5180",
+    "beforeBuildCommand": "pnpm --filter @shotbeam/web build",
+    "frontendDist": "../../web/dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Shotbeam",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "font-src": "'self' data: http://127.0.0.1:47811",
+        "img-src": "'self' data: blob: http://127.0.0.1:47811",
+        "media-src": "'self' blob: http://127.0.0.1:47811",
+        "connect-src": "'self' ipc: http://ipc.localhost http://127.0.0.1:47811"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Video",
+    "shortDescription": "Local AI studio for short videos",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

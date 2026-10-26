@@ -1,0 +1,25 @@
+{
+  "name": "shotbeam",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "turbo run dev --filter=@shotbeam/engine --filter=@shotbeam/web",
+    "dev:engine": "pnpm --filter @shotbeam/engine dev",
+    "dev:web": "pnpm --filter @shotbeam/web dev",
+    "dev:desktop": "pnpm --filter @shotbeam/desktop tauri dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "check": "pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "turbo": "^2.11.10",
+    "typescript": "^7.0.2"
+  }
+}

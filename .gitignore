@@ -1,0 +1,10 @@
+node_modules
+dist
+.turbo
+*.log
+.env
+.idea/workspace.xml
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
+__pycache__
+.venv

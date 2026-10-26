@@ -1,0 +1,35 @@
+@import "tailwindcss";
+@import "@shotbeam/ui/styles.css";
+
+/* App, not a page: chrome is not selectable, no rubber-band scrolling. */
+@layer base {
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+  input,
+  textarea,
+  [contenteditable="true"],
+  [data-selectable] {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  img,
+  a {
+    -webkit-user-drag: none;
+  }
+  textarea {
+    resize: vertical;
+  }
+}
+
+/* Thin scrollbars that follow the theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--color-muted-foreground) 35%, transparent) transparent;
+}
