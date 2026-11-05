@@ -21,6 +21,7 @@ import {
   Film,
   FolderOpen,
   type LucideIcon,
+  PanelLeftClose,
   Plus,
   Settings,
   Sparkles,
@@ -28,9 +29,21 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '../lib/api'
+import { type MenuEntry, useMenuZone } from '../lib/contextMenu'
+import { comboLabel } from '../lib/hotkeys'
 import { errorToast, useProjects } from '../lib/queries'
 import { type Route, useUi } from '../lib/store'
 import { Field, Textarea } from './common'
+
+/** The sections in sidebar order (Ctrl+1…6). */
+const NAV: { icon: LucideIcon; label: string; route: Route }[] = [
+  { icon: FolderOpen, label: 'Медиа', route: { kind: 'media' } },
+  { icon: Film, label: 'Видео', route: { kind: 'videos' } },
+  { icon: Sparkles, label: 'Референсы', route: { kind: 'references' } },
+  { icon: Clapperboard, label: 'Форматы', route: { kind: 'formats' } },
+  { icon: AudioLines, label: 'Голос', route: { kind: 'voice' } },
+  { icon: Wand2, label: 'Моушн', route: { kind: 'motion' } },
+]
 
 function NavItem({ icon: Icon, label, route }: { icon: LucideIcon; label: string; route: Route }) {
   const current = useUi((s) => s.route)
@@ -40,6 +53,7 @@ function NavItem({ icon: Icon, label, route }: { icon: LucideIcon; label: string
     <button
       type="button"
       onClick={() => navigate(route)}
+      data-route={route.kind}
       aria-current={active ? 'page' : undefined}
       className={cn(
         'mb-0.5 flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-[13.5px] text-sidebar-foreground transition-colors hover:bg-sidebar-accent',
@@ -126,6 +140,46 @@ function ProjectSwitcher() {
   const setProject = useUi((s) => s.setProject)
   const [creating, setCreating] = useState(false)
   const current = projects.find((p) => p.id === projectId)
+  const navigate = useUi((s) => s.navigate)
+  useMenuZone('sidebar', ({ target }) => {
+    const route = target.closest('[data-route]')?.getAttribute('data-route')
+    const sections: MenuEntry[] = NAV.map((n, i) => ({
+      label: n.label,
+      icon: n.icon,
+      shortcut: comboLabel({ code: `Digit${i + 1}`, mod: true }),
+      onSelect: () => navigate(n.route),
+    }))
+    const opened = route ? NAV.find((n) => n.route.kind === route) : undefined
+    return [
+      ...(opened
+        ? [
+            {
+              label: `Открыть «${opened.label}»`,
+              icon: opened.icon,
+              onSelect: () => navigate(opened.route),
+            },
+            'separator' as const,
+          ]
+        : []),
+      { heading: 'Проекты' },
+      ...projects.map(
+        (p): MenuEntry => ({
+          label: `${p.name}${p.id === projectId ? ' ✓' : ''}`,
+          onSelect: () => setProject(p.id),
+        }),
+      ),
+      { label: 'Новый проект', icon: Plus, onSelect: () => setCreating(true) },
+      'separator',
+      ...(opened ? [] : sections),
+      'separator',
+      {
+        label: 'Скрыть боковую панель',
+        icon: PanelLeftClose,
+        shortcut: comboLabel({ code: 'Backslash', mod: true }),
+        onSelect: () => useUi.getState().toggleSidebar(),
+      },
+    ]
+  })
   return (
     <>
       <DropdownMenu>
@@ -164,17 +218,17 @@ function ProjectSwitcher() {
 
 export function Sidebar() {
   return (
-    <aside className="flex h-full w-64 shrink-0 select-none flex-col border-r border-sidebar-border bg-sidebar">
+    <aside
+      className="flex h-full w-64 shrink-0 select-none flex-col border-r border-sidebar-border bg-sidebar"
+      data-menu="sidebar"
+    >
       <div className="p-2">
         <ProjectSwitcher />
       </div>
       <nav className="mt-2 flex-1 overflow-y-auto px-2">
-        <NavItem icon={FolderOpen} label="Медиа" route={{ kind: 'media' }} />
-        <NavItem icon={Film} label="Видео" route={{ kind: 'videos' }} />
-        <NavItem icon={Sparkles} label="Референсы" route={{ kind: 'references' }} />
-        <NavItem icon={Clapperboard} label="Форматы" route={{ kind: 'formats' }} />
-        <NavItem icon={AudioLines} label="Голос" route={{ kind: 'voice' }} />
-        <NavItem icon={Wand2} label="Моушн" route={{ kind: 'motion' }} />
+        {NAV.map((n) => (
+          <NavItem key={n.route.kind} icon={n.icon} label={n.label} route={n.route} />
+        ))}
       </nav>
       <div className="border-t border-sidebar-border p-2">
         <NavItem icon={Settings} label="Настройки" route={{ kind: 'settings' }} />

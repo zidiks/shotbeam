@@ -1,9 +1,11 @@
 import type { Asset } from '@shotbeam/core'
 import { cn, Spinner } from '@shotbeam/ui'
 import { AudioLines, CircleAlert, Film, ImageIcon } from 'lucide-react'
+import type * as React from 'react'
 import { useState } from 'react'
 import { mediaUrl } from '../lib/api'
 import { timecode } from '../lib/format'
+import { DeleteOnHover } from './menus'
 
 /** A media tile: thumbnail (or an icon), length, status. */
 export function AssetCard({
@@ -11,17 +13,24 @@ export function AssetCard({
   selected,
   onClick,
   draggable,
-}: {
+  onDelete,
+  className,
+  ...rest
+}: Omit<React.ComponentProps<'button'>, 'onClick'> & {
   asset: Asset
   selected?: boolean
   onClick?: () => void
   draggable?: boolean
+  /** Shows a trash button on hover. */
+  onDelete?: () => void
 }) {
   const [broken, setBroken] = useState(false)
   const Icon = asset.kind === 'audio' ? AudioLines : asset.kind === 'image' ? ImageIcon : Film
   const bpm = asset.tags.find((t) => /bpm$/.test(t))
   return (
+    // `rest` carries what a wrapping menu trigger adds (ref, onContextMenu, data-state).
     <button
+      {...rest}
       type="button"
       onClick={onClick}
       draggable={draggable}
@@ -32,9 +41,16 @@ export function AssetCard({
       className={cn(
         'group flex w-full flex-col overflow-hidden rounded-lg border bg-card text-left transition-colors hover:border-ring/60',
         selected && 'border-brand ring-2 ring-brand/30',
+        className,
       )}
     >
       <div className="relative aspect-video w-full bg-muted">
+        {onDelete ? (
+          <DeleteOnHover
+            label={asset.sourceId ? 'Удалить в Корзину' : 'Удалить'}
+            onDelete={onDelete}
+          />
+        ) : null}
         {!broken && asset.kind !== 'audio' && asset.status !== 'new' ? (
           <img
             src={mediaUrl(asset.id, 'thumb', asset.updatedAt)}

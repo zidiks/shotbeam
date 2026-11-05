@@ -13,6 +13,8 @@ import {
   newId,
   nowIso,
   shiftWords,
+  timelineBeats,
+  trackLabel,
   type Word,
 } from '@shotbeam/core'
 import type { JobQueue } from './jobs'
@@ -97,9 +99,46 @@ export class Compositions {
         if (role === 'music' || role === 'sfx') op.level = 1
       }
     }
-    const { composition, created } = applyOps(current, ops)
+    const { composition, created } = applyOps(current, ops, {
+      beats: (c) => this.timelineBeats(c),
+      sourceLength: (assetId) => this.store.getAsset(assetId).duration,
+    })
     const saved = this.store.saveComposition(composition, current.version, opts)
     return { composition: saved, created }
+  }
+
+  private timelineBeats(c: Composition) {
+    return timelineBeats(c, (assetId) => this.indexer.analysis(assetId).music?.beats)
+  }
+
+  /**
+   * The beat grid of the music under the edit, in timeline time, with where it comes from, and
+   * whether the format asks for cuts on the beat.
+   */
+  beats(id: string) {
+    const c = this.store.getComposition(id)
+    const music: { itemId: string; assetId: string; track: string; bpm: number | null }[] = []
+    for (const track of c.tracks) {
+      if (track.kind !== 'audio' || track.muted) continue
+      for (const item of track.items) {
+        if (item.type !== 'audio') continue
+        const m = this.indexer.analysis(item.assetId).music
+        const role = this.store.getAsset(item.assetId).role
+        if (!m && role !== 'music') continue
+        music.push({
+          itemId: item.id,
+          assetId: item.assetId,
+          track: trackLabel(c, track.id),
+          bpm: m?.bpm ?? null,
+        })
+      }
+    }
+    const format = c.formatId ? this.store.getFormat(c.formatId) : null
+    return {
+      beats: this.timelineBeats(c),
+      music,
+      cutOnBeat: format?.recipe.pacing.cutOnBeat ?? false,
+    }
   }
 
   private checkAssetRefs(item: Record<string, unknown>) {

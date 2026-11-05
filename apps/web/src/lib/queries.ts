@@ -150,6 +150,7 @@ export interface SetupStatus {
   python: { ready: boolean; features: Record<string, boolean> | null }
   voices: ProviderStatus[]
   motion: Record<'hyperframes' | 'remotion', { ready: boolean; detail: string }>
+  upscaler: { ready: boolean; supported: boolean }
 }
 
 export const useSetup = () =>

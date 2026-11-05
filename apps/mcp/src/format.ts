@@ -6,6 +6,7 @@ import {
   type Format,
   type Item,
   itemEnd,
+  type MusicAnalysis,
   type Reference,
   trackLabel,
 } from '@shotbeam/core'
@@ -86,7 +87,7 @@ export function describeAsset(
   if (an.music) {
     out.push(
       '',
-      `Music: ${an.music.bpm} BPM, ${an.music.beats.length} beats; first: ${an.music.beats
+      `Music: ${musicLine(an.music)}; first beats: ${an.music.beats
         .slice(0, 16)
         .map((b) => b.toFixed(2))
         .join(', ')}`,
@@ -165,4 +166,83 @@ export function compositionText(c: Composition, names: Map<string, string>): str
     for (const i of tr.items) out.push(itemLine(i, names))
   }
   return out.join('\n')
+}
+
+const BARS = '▁▂▃▄▅▆▇█'
+
+/** Energy over the track in `parts` steps, as a sparkline. */
+export function energyShape(curve: number[], parts = 16): string {
+  if (!curve.length) return ''
+  let out = ''
+  for (let p = 0; p < parts; p++) {
+    const from = Math.floor((p * curve.length) / parts)
+    const to = Math.max(from + 1, Math.floor(((p + 1) * curve.length) / parts))
+    const part = curve.slice(from, to)
+    const v = part.reduce((s, x) => s + x, 0) / part.length
+    out += BARS[Math.min(BARS.length - 1, Math.round(v * (BARS.length - 1)))]
+  }
+  return out
+}
+
+/** Tempo, key and character of a track in one line. */
+export function musicLine(m: MusicAnalysis): string {
+  const parts = [`${Math.round(m.bpm)} BPM`]
+  if (m.key) parts.push(m.key)
+  if (m.brightness)
+    parts.push(
+      `${m.brightness < 1500 ? 'dark' : m.brightness < 2800 ? 'warm' : 'bright'} (${m.brightness} Hz)`,
+    )
+  if (m.density !== undefined)
+    parts.push(
+      `${m.density < 2 ? 'sparse' : m.density < 4 ? 'steady' : 'busy'} (${m.density} onsets/s)`,
+    )
+  if (m.curve?.length) parts.push(`energy ${energyShape(m.curve)}`)
+  return parts.join(', ')
+}
+
+/**
+ * The stretch of `seconds` with the most energy, starting on a beat: where to set `in` so the
+ * video gets the best part of the track.
+ */
+export function bestWindow(m: MusicAnalysis, seconds: number): { in: number; energy: number } {
+  const curve = m.curve ?? []
+  if (!curve.length || seconds >= curve.length) return { in: m.beats[0] ?? 0, energy: 0 }
+  let best = { in: 0, energy: -1 }
+  for (const b of m.beats.length ? m.beats : [0]) {
+    const from = Math.floor(b)
+    if (from + seconds > curve.length) break
+    const part = curve.slice(from, from + Math.ceil(seconds))
+    const energy = part.reduce((s, x) => s + x, 0) / part.length
+    if (energy > best.energy) best = { in: b, energy }
+  }
+  return best
+}
+
+export interface BeatInfo {
+  beats: number[]
+  music: { itemId: string; assetId: string; track: string; bpm: number | null }[]
+  cutOnBeat: boolean
+}
+
+/** What the music under an edit gives to cut on. */
+export function beatsText(info: BeatInfo, names: Map<string, string>): string {
+  if (!info.music.length) {
+    return info.cutOnBeat
+      ? 'The format cuts on the beat: put music on an audio track first (find_music).'
+      : ''
+  }
+  const from = info.music
+    .map(
+      (m) =>
+        `${names.get(m.assetId) ?? m.assetId} on ${m.track}${m.bpm ? ` (${Math.round(m.bpm)} BPM)` : ' (beats not analysed)'}`,
+    )
+    .join(', ')
+  if (!info.beats.length) return `Music: ${from}; no beats yet.`
+  const shown = info.beats.slice(0, 48).map((b) => b.toFixed(2))
+  return [
+    `Beats on the timeline from ${from}: ${shown.join(', ')}${info.beats.length > shown.length ? ` … (${info.beats.length} in all)` : ''}`,
+    info.cutOnBeat
+      ? 'The format cuts on the beat: after placing the shots, run {op:"cutToBeats", trackId:<V1 id>} (every: 2 or 4 for longer shots).'
+      : 'To land the cuts on these beats: {op:"cutToBeats", trackId, every?}.',
+  ].join('\n')
 }

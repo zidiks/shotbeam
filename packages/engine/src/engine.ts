@@ -4,7 +4,9 @@ import { openDatabase } from './db'
 import { EventBus } from './events'
 import { JobQueue } from './jobs'
 import { Indexer } from './media/indexer'
+import { Upscaler } from './media/upscale'
 import { Motion } from './motion/motion'
+import { Music } from './music'
 import { Library } from './paths'
 import { Python } from './python'
 import { References } from './references'
@@ -26,6 +28,8 @@ export class Engine {
   readonly fonts: Fonts
   readonly compositions: Compositions
   readonly motion: Motion
+  readonly upscaler: Upscaler
+  readonly music: Music
 
   constructor(readonly library = new Library()) {
     const db = openDatabase(library.database)
@@ -46,6 +50,8 @@ export class Engine {
     this.voices = new Voices(library, this.store, this.jobs, this.python, this.sources)
     this.fonts = new Fonts(join(library.root, 'fonts'))
     this.motion = new Motion(library, this.store, this.jobs, this.sources)
+    this.upscaler = new Upscaler(library, this.store, this.jobs, this.sources)
+    this.music = new Music(library, this.store, this.jobs, this.python, this.sources)
     this.compositions = new Compositions(
       library,
       this.store,

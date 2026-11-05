@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { Toaster } from 'sonner'
 import { EngineOffline } from '../components/EngineOffline'
+import { GlobalContextMenu } from '../components/GlobalContextMenu'
 import { ShortcutsDialog } from '../components/ShortcutsDialog'
 import { Sidebar } from '../components/Sidebar'
 import { TitleBar } from '../components/TitleBar'
@@ -141,6 +142,7 @@ export function App() {
         </div>
       </div>
       <ShortcutsDialog />
+      <GlobalContextMenu />
       <Toaster position="bottom-right" richColors closeButton />
     </TooltipProvider>
   )

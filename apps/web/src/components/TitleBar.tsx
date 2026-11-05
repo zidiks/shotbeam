@@ -101,6 +101,7 @@ export function TitleBar({ project }: { project: Project | null }) {
   const inEditor = ui.route.kind === 'editor'
   return (
     <header
+      data-menu="app"
       className="flex h-11 shrink-0 select-none items-stretch border-b"
       data-tauri-drag-region={customWindow || undefined}
     >

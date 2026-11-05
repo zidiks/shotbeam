@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { type Analysis, type Asset, nowIso, Transcript } from '@shotbeam/core'
+import { type Analysis, type Asset, MusicAnalysis, nowIso, Transcript } from '@shotbeam/core'
 import type { JobQueue } from '../jobs'
 import type { Library } from '../paths'
 import type { Python } from '../python'
@@ -15,6 +15,7 @@ import {
   thumbnail,
 } from './ffmpeg'
 import { findMoments } from './moments'
+import { type Waveform, wavPeaks } from './waveform'
 
 /*
  * Turns a file into something Claude and the editor can work with: a proxy, a thumbnail,
@@ -51,7 +52,10 @@ export class Indexer {
   dir(assetId: string) {
     return this.library.assetDir(assetId)
   }
-  file(assetId: string, name: 'thumb.jpg' | 'proxy.mp4' | 'audio.wav' | 'analysis.json') {
+  file(
+    assetId: string,
+    name: 'thumb.jpg' | 'proxy.mp4' | 'audio.wav' | 'analysis.json' | 'waveform.json',
+  ) {
     return join(this.dir(assetId), name)
   }
   sheetFile(assetId: string, file: string) {
@@ -111,8 +115,9 @@ export class Indexer {
     progress(0.02, 'Reading the file')
     const info = await probe(asset.path, signal)
     const kind = asset.kind === 'image' || info.still ? 'image' : info.hasVideo ? 'video' : 'audio'
+    // Re-read: whoever made the file names and tags it while ffprobe runs (voices, upscales).
     asset = this.store.saveAsset({
-      ...asset,
+      ...this.store.getAsset(assetId),
       kind,
       size: st.size,
       mtime: st.mtimeMs,
@@ -254,6 +259,24 @@ export class Indexer {
     }).job
   }
 
+  /**
+   * Peaks of the sound for drawing it, made from audio.wav the first time they are asked for and
+   * kept until the audio is extracted again. Null for files without sound (or not indexed yet).
+   */
+  waveform(assetId: string): Waveform | null {
+    const wav = this.file(assetId, 'audio.wav')
+    if (!existsSync(wav)) return null
+    const cached = this.file(assetId, 'waveform.json')
+    if (existsSync(cached) && statSync(cached).mtimeMs >= statSync(wav).mtimeMs) {
+      try {
+        return JSON.parse(readFileSync(cached, 'utf8')) as Waveform
+      } catch {}
+    }
+    const wave = wavPeaks(readFileSync(wav))
+    writeFileSync(cached, JSON.stringify(wave))
+    return wave
+  }
+
   /** Tempo and beat times of a track (librosa). */
   beats(assetId: string) {
     const running = this.jobs.active('beats', assetId)
@@ -264,7 +287,7 @@ export class Indexer {
         signal: ctx.signal,
         onProgress: (f, m) => ctx.progress(f, m),
       })
-      const music = JSON.parse(readFileSync(out.file, 'utf8')) as { bpm: number; beats: number[] }
+      const music = MusicAnalysis.parse(JSON.parse(readFileSync(out.file, 'utf8')))
       out.cleanup()
       const analysis = this.analysis(assetId)
       analysis.music = music

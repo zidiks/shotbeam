@@ -1,11 +1,13 @@
 import { Button } from '@shotbeam/ui'
-import { Clapperboard } from 'lucide-react'
+import { Clapperboard, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Empty } from '../components/common'
 import { NewProjectDialog } from '../components/Sidebar'
+import { usePageMenu } from '../lib/contextMenu'
 
 export function WelcomePage() {
   const [open, setOpen] = useState(false)
+  usePageMenu(() => [{ label: 'Новый проект', icon: Plus, onSelect: () => setOpen(true) }])
   return (
     <>
       <Empty

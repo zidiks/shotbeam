@@ -9,15 +9,29 @@ import {
   Input,
 } from '@shotbeam/ui'
 import { useMutation } from '@tanstack/react-query'
-import { Captions, ChevronDown, FilmIcon, RefreshCw, Sparkles, X } from 'lucide-react'
+import {
+  Captions,
+  ChevronDown,
+  Copy,
+  FilmIcon,
+  FolderOpen,
+  Maximize,
+  RefreshCw,
+  Save,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api, mediaUrl, sheetUrl } from '../lib/api'
+import { useMenuZone } from '../lib/contextMenu'
 import { useJobFor } from '../lib/events'
 import { bytes, ROLE_LABEL, timecode } from '../lib/format'
 import { errorToast, useAsset, useCompositions } from '../lib/queries'
 import { useUi } from '../lib/store'
 import { Busy, Field, Progress, Textarea } from './common'
+import { canUpscale, copyText, deleteAssetAsk, reveal, upscaleAsset, upscaleChoices } from './menus'
 
 /** Adds a stretch of an asset to one of the project's videos. */
 export function AddToVideo({
@@ -136,6 +150,44 @@ export function AssetPanel({ id, onClose }: { id: string; onClose: () => void })
     void p.play()
   }
 
+  useMenuZone('asset-panel', () => {
+    if (!asset) return []
+    return [
+      { heading: asset.name },
+      { label: 'Показать в папке', icon: FolderOpen, onSelect: () => void reveal(asset.path) },
+      {
+        label: 'Копировать путь',
+        icon: Copy,
+        onSelect: () => void copyText(asset.path, 'Путь скопирован'),
+      },
+      'separator',
+      ...(canUpscale(asset)
+        ? [
+            { heading: 'Апскейл' },
+            ...upscaleChoices(asset).map((c) => ({
+              label: c.label,
+              icon: Maximize,
+              onSelect: () => void upscaleAsset(asset, c.model, c.scale),
+            })),
+            'separator' as const,
+          ]
+        : []),
+      { label: 'Сохранить теги и заметки', icon: Save, onSelect: () => save.mutate() },
+      { label: 'Переиндексировать', icon: RefreshCw, onSelect: () => reindex.mutate() },
+      ...(asset.hasAudio && asset.kind !== 'image'
+        ? [{ label: 'Распознать речь заново', icon: Captions, onSelect: () => transcribe.mutate() }]
+        : []),
+      'separator',
+      {
+        label: asset.sourceId ? 'Удалить в Корзину' : 'Удалить',
+        icon: Trash2,
+        destructive: true,
+        onSelect: () => void deleteAssetAsk(asset).then((ok) => ok && onClose()),
+      },
+      { label: 'Закрыть панель', icon: X, onSelect: onClose },
+    ]
+  })
+
   if (!asset || !analysis) {
     return <aside className="w-[460px] shrink-0 border-l bg-card" />
   }
@@ -145,7 +197,7 @@ export function AssetPanel({ id, onClose }: { id: string; onClose: () => void })
   const segments = analysis.transcript?.segments ?? []
 
   return (
-    <aside className="flex w-[460px] shrink-0 flex-col border-l bg-card">
+    <aside className="flex w-[460px] shrink-0 flex-col border-l bg-card" data-menu="asset-panel">
       <div className="flex items-center gap-2 border-b px-4 py-2.5">
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold" title={asset.path}>
           {asset.name}

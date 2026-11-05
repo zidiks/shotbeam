@@ -1,14 +1,16 @@
 import type { AssetRole, Project, Source } from '@shotbeam/core'
 import { Button, cn, Dialog, DialogContent, DialogTitle, Input } from '@shotbeam/ui'
 import { useMutation } from '@tanstack/react-query'
-import { FolderOpen, FolderPlus, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { FolderOpen, FolderPlus, Music2, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { AssetCard } from '../components/AssetCard'
 import { AssetPanel } from '../components/AssetPanel'
 import { Choice, Empty, Field, PageHeader } from '../components/common'
-import { AssetMenu, SourceMenu } from '../components/menus'
+import { MusicFinder } from '../components/MusicFinder'
+import { AssetMenu, deleteAssetAsk, SourceMenu } from '../components/menus'
 import { api } from '../lib/api'
+import { type MenuEntry, usePageMenu } from '../lib/contextMenu'
 import { ROLE_LABEL } from '../lib/format'
 import { errorToast, useAssets, useSources } from '../lib/queries'
 import { useUi } from '../lib/store'
@@ -178,12 +180,40 @@ export function MediaPage({ project, assetId }: { project: Project; assetId?: st
   const [filter, setFilter] = useState<AssetRole | 'all'>('all')
   const [q, setQ] = useState('')
   const [adding, setAdding] = useState(false)
+  const [music, setMusic] = useState(false)
   const assets = useAssets({
     projectId: project.id,
     role: filter === 'all' ? undefined : filter,
     q: q.trim() || undefined,
   })
   const items = (assets.data?.items ?? []).filter((a) => a.role !== 'reference')
+  const sources = useSources(project.id).data ?? []
+  usePageMenu(() => [
+    { label: 'Подключить папку', icon: FolderPlus, onSelect: () => setAdding(true) },
+    { label: 'Музыка онлайн…', icon: Music2, onSelect: () => setMusic(true) },
+    {
+      label: 'Пересканировать все папки',
+      icon: RefreshCw,
+      disabled: !sources.length,
+      onSelect: () => {
+        for (const s of sources) api.post(`/api/sources/${s.id}/scan`).catch(errorToast)
+        toast.success('Сканирую папки')
+      },
+    },
+    {
+      label: 'Найти…',
+      icon: Search,
+      onSelect: () => document.getElementById('media-search')?.focus(),
+    },
+    'separator',
+    { heading: 'Показать' },
+    ...FILTERS.map(
+      (f): MenuEntry => ({
+        label: `${f.label}${f.value === filter ? ' ✓' : ''}`,
+        onSelect: () => setFilter(f.value),
+      }),
+    ),
+  ])
 
   return (
     <div className="flex h-full min-h-0">
@@ -192,10 +222,16 @@ export function MediaPage({ project, assetId }: { project: Project; assetId?: st
           title="Медиа"
           description="Исходники, озвучка, музыка и рендеры проекта. Клод видит то же самое через MCP."
           actions={
-            <Button variant="brand" onClick={() => setAdding(true)}>
-              <FolderPlus />
-              Подключить папку
-            </Button>
+            <>
+              <Button variant="outline" onClick={() => setMusic(true)}>
+                <Music2 />
+                Музыка онлайн
+              </Button>
+              <Button variant="brand" onClick={() => setAdding(true)}>
+                <FolderPlus />
+                Подключить папку
+              </Button>
+            </>
           }
         />
         <SourcesBar project={project} />
@@ -221,6 +257,7 @@ export function MediaPage({ project, assetId }: { project: Project; assetId?: st
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              id="media-search"
               placeholder="Поиск по словам в видео, тегам…"
               className="pl-8"
             />
@@ -257,6 +294,11 @@ export function MediaPage({ project, assetId }: { project: Project; assetId?: st
                   onClick={() =>
                     navigate({ kind: 'media', assetId: a.id === assetId ? undefined : a.id })
                   }
+                  onDelete={() =>
+                    void deleteAssetAsk(a).then(
+                      (ok) => ok && a.id === assetId && navigate({ kind: 'media' }),
+                    )
+                  }
                 />
               </AssetMenu>
             ))}
@@ -264,6 +306,7 @@ export function MediaPage({ project, assetId }: { project: Project; assetId?: st
         )}
       </div>
       {assetId ? <AssetPanel id={assetId} onClose={() => navigate({ kind: 'media' })} /> : null}
+      <MusicFinder open={music} onOpenChange={setMusic} />
       <AddSourceDialog project={project} open={adding} onOpenChange={setAdding} />
     </div>
   )

@@ -145,6 +145,24 @@ export const Moment = z.object({
 })
 export type Moment = z.infer<typeof Moment>
 
+/**
+ * What a music track is like, for cutting to it and for choosing it by mood. Fields after
+ * `beats` came later and are missing in tracks analysed before.
+ */
+export const MusicAnalysis = z.object({
+  bpm: z.number(),
+  beats: z.array(z.number()),
+  /** Estimated key, e.g. "A minor". */
+  key: z.string().optional(),
+  /** Mean spectral centroid, Hz: low = dark and warm, high = bright. */
+  brightness: z.number().optional(),
+  /** Note onsets per second: how busy it is. */
+  density: z.number().optional(),
+  /** Energy per second, 0..1 of the track's loudest second: where it builds and drops. */
+  curve: z.array(z.number()).optional(),
+})
+export type MusicAnalysis = z.infer<typeof MusicAnalysis>
+
 /** Everything indexing learned about an asset; kept as a JSON file next to its previews. */
 export const Analysis = z.object({
   version: z.number(),
@@ -156,7 +174,7 @@ export const Analysis = z.object({
   motion: z.array(z.number()),
   sheets: z.array(ContactSheet),
   moments: z.array(Moment),
-  music: z.object({ bpm: z.number(), beats: z.array(z.number()) }).nullable(),
+  music: MusicAnalysis.nullable(),
 })
 export type Analysis = z.infer<typeof Analysis>
 
@@ -184,6 +202,10 @@ export type Reference = z.infer<typeof Reference>
 
 export const MotionEngine = z.enum(['remotion', 'hyperframes'])
 export type MotionEngine = z.infer<typeof MotionEngine>
+
+/** Real-ESRGAN models: video-made anime/game one, or the general one for camera footage. */
+export const UpscaleModel = z.enum(['animevideo', 'general'])
+export type UpscaleModel = z.infer<typeof UpscaleModel>
 
 export const VoiceProviderId = z.enum(['fish-api', 'fish-local', 'kokoro', 'chatterbox'])
 export type VoiceProviderId = z.infer<typeof VoiceProviderId>

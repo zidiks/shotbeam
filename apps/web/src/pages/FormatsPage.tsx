@@ -1,7 +1,7 @@
 import type { Composition, Format, FormatBeat, FormatRecipe, Project } from '@shotbeam/core'
 import { Button, cn, Input } from '@shotbeam/ui'
 import { useMutation } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, Clapperboard, Film, Plus, Trash2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Clapperboard, Film, Plus, Save, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
@@ -15,6 +15,7 @@ import {
 } from '../components/common'
 import { FormatMenu } from '../components/menus'
 import { api } from '../lib/api'
+import { useMenuZone, usePageMenu } from '../lib/contextMenu'
 import { errorToast, useFormat, useFormats, useReferences, useVoices } from '../lib/queries'
 import { useUi } from '../lib/store'
 
@@ -159,6 +160,22 @@ function FormatEditor({ id, project }: { id: string; project: Project }) {
     onSuccess: (c) => navigate({ kind: 'editor', id: c.id }),
     onError: errorToast,
   })
+  useMenuZone('format-editor', () =>
+    draft
+      ? [
+          { heading: draft.name },
+          { label: 'Сохранить', icon: Save, onSelect: () => save.mutate(draft) },
+          { label: 'Видео по формату', icon: Film, onSelect: () => makeVideo.mutate() },
+          'separator',
+          {
+            label: 'Удалить формат',
+            icon: Trash2,
+            destructive: true,
+            onSelect: () => confirm(`Удалить формат «${draft.name}»?`) && remove.mutate(),
+          },
+        ]
+      : [],
+  )
   if (!draft) return null
   const r = draft.recipe
   const setR = (patch: Partial<FormatRecipe>) => setDraft({ ...draft, recipe: { ...r, ...patch } })
@@ -166,7 +183,7 @@ function FormatEditor({ id, project }: { id: string; project: Project }) {
   const dirty = JSON.stringify(draft) !== JSON.stringify(format)
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4 px-6 pb-16">
+    <div className="mx-auto max-w-3xl space-y-4 px-6 pb-16" data-menu="format-editor">
       <div className="sticky top-0 z-10 -mx-6 flex items-center gap-2 border-b bg-background/90 px-6 py-3 backdrop-blur">
         <Input
           value={draft.name}
@@ -438,6 +455,7 @@ export function FormatsPage({ project, id }: { project: Project; id?: string }) 
     onSuccess: (f) => navigate({ kind: 'formats', id: f.id }),
     onError: errorToast,
   })
+  usePageMenu(() => [{ label: 'Новый формат', icon: Plus, onSelect: () => create.mutate() }])
   return (
     <div className="flex h-full min-h-0">
       <div className="w-72 shrink-0 overflow-y-auto border-r">

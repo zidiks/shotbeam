@@ -5,8 +5,9 @@ import { useMutation } from '@tanstack/react-query'
 import { Film, Play, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Choice, Empty, Field, PageHeader, Segmented } from '../components/common'
-import { CompositionMenu } from '../components/menus'
+import { AssetMenu, CompositionMenu, DeleteOnHover, deleteAssetAsk } from '../components/menus'
 import { api, mediaUrl } from '../lib/api'
+import { usePageMenu } from '../lib/contextMenu'
 import { timecode } from '../lib/format'
 import { errorToast, useAssets, useCompositions, useFormats } from '../lib/queries'
 import { useUi } from '../lib/store'
@@ -101,6 +102,7 @@ export function VideosPage({ project }: { project: Project }) {
   const comps = useCompositions(project.id).data ?? []
   const renders = useAssets({ projectId: project.id, role: 'render', limit: 24 }).data?.items ?? []
   const [open, setOpen] = useState(false)
+  usePageMenu(() => [{ label: 'Новое видео', icon: Plus, onSelect: () => setOpen(true) }])
   const [playing, setPlaying] = useState<string | null>(null)
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/api/compositions/${id}`),
@@ -169,41 +171,44 @@ export function VideosPage({ project }: { project: Project }) {
           <h2 className="px-6 pt-8 pb-3 font-semibold">Рендеры</h2>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3 px-6">
             {renders.map((r) => (
-              <div key={r.id} className="overflow-hidden rounded-lg border bg-card">
-                {playing === r.id ? (
-                  // biome-ignore lint/a11y/useMediaCaption: rendered video with burned-in captions
-                  <video
-                    src={mediaUrl(r.id, 'original')}
-                    controls
-                    autoPlay
-                    className="aspect-[9/16] w-full bg-black object-contain"
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setPlaying(r.id)}
-                    className="relative block aspect-[9/16] w-full bg-muted"
-                  >
-                    <img
-                      src={mediaUrl(r.id, 'thumb', r.updatedAt)}
-                      alt=""
-                      className="absolute inset-0 size-full object-contain"
-                      loading="lazy"
+              <AssetMenu key={r.id} asset={r} onOpen={() => setPlaying(r.id)}>
+                <div className="group relative overflow-hidden rounded-lg border bg-card">
+                  <DeleteOnHover label="Удалить рендер" onDelete={() => void deleteAssetAsk(r)} />
+                  {playing === r.id ? (
+                    // biome-ignore lint/a11y/useMediaCaption: rendered video with burned-in captions
+                    <video
+                      src={mediaUrl(r.id, 'original')}
+                      controls
+                      autoPlay
+                      className="aspect-[9/16] w-full bg-black object-contain"
                     />
-                    <Play className="absolute inset-0 m-auto size-8 text-white drop-shadow" />
-                  </button>
-                )}
-                <div className="px-2 py-1.5">
-                  <p className="truncate text-[13px]">{r.name}</p>
-                  <p
-                    className="truncate text-xs text-muted-foreground"
-                    title={r.path}
-                    data-selectable
-                  >
-                    {r.path}
-                  </p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setPlaying(r.id)}
+                      className="relative block aspect-[9/16] w-full bg-muted"
+                    >
+                      <img
+                        src={mediaUrl(r.id, 'thumb', r.updatedAt)}
+                        alt=""
+                        className="absolute inset-0 size-full object-contain"
+                        loading="lazy"
+                      />
+                      <Play className="absolute inset-0 m-auto size-8 text-white drop-shadow" />
+                    </button>
+                  )}
+                  <div className="px-2 py-1.5">
+                    <p className="truncate text-[13px]">{r.name}</p>
+                    <p
+                      className="truncate text-xs text-muted-foreground"
+                      title={r.path}
+                      data-selectable
+                    >
+                      {r.path}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              </AssetMenu>
             ))}
           </div>
         </>

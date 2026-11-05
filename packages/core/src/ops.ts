@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { cutToBeats } from './beats'
 import { type Composition, TrackKind } from './composition'
 import {
   addItem,
@@ -36,6 +37,14 @@ export const CompositionOp = z.discriminatedUnion('op', [
   z.object({ op: z.literal('split'), id: z.string(), at: z.number() }),
   z.object({ op: z.literal('reorder'), id: z.string(), index: z.number().int() }),
   z.object({ op: z.literal('closeGaps'), trackId: z.string() }),
+  z.object({
+    op: z.literal('cutToBeats'),
+    trackId: z.string(),
+    /** 1 = every beat, 2 = every other, 4 = every bar. */
+    every: z.number().int().min(1).max(16).optional(),
+    /** Beat times on the timeline; the engine fills them from the music when left out. */
+    beats: z.array(z.number()).optional(),
+  }),
   z.object({ op: z.literal('addTrack'), kind: TrackKind, name: z.string().optional() }),
   z.object({ op: z.literal('removeTrack'), trackId: z.string() }),
   z.object({
@@ -62,8 +71,16 @@ export type CompositionOp = z.infer<typeof CompositionOp>
 
 export type OpResult = { composition: Composition; created: string[] }
 
+/** What some ops need from outside the document (the engine knows the files). */
+export interface OpContext {
+  /** Beat times on the timeline of the composition as it is at that op. */
+  beats?: (c: Composition) => number[]
+  /** Length of an asset's file, seconds. */
+  sourceLength?: (assetId: string) => number | null | undefined
+}
+
 /** Applies edits in order; throws on the first one that does not fit (nothing is applied then). */
-export function applyOps(c: Composition, ops: CompositionOp[]): OpResult {
+export function applyOps(c: Composition, ops: CompositionOp[], ctx: OpContext = {}): OpResult {
   let next = c
   const created: string[] = []
   for (const op of ops) {
@@ -97,6 +114,12 @@ export function applyOps(c: Composition, ops: CompositionOp[]): OpResult {
         break
       case 'closeGaps':
         next = closeGaps(next, op.trackId)
+        break
+      case 'cutToBeats':
+        next = cutToBeats(next, op.trackId, op.beats ?? ctx.beats?.(next) ?? [], {
+          every: op.every,
+          sourceLength: ctx.sourceLength,
+        })
         break
       case 'addTrack': {
         const [n, track] = addTrack(next, op.kind, op.name)

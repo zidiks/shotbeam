@@ -1,7 +1,7 @@
 import type { Job, Project, Voice, VoiceProviderId } from '@shotbeam/core'
 import { Button, cn, Input } from '@shotbeam/ui'
 import { useMutation } from '@tanstack/react-query'
-import { Mic, Square, Trash2, Wand2 } from 'lucide-react'
+import { AudioLines, FolderOpen, Mic, Square, Trash2, Wand2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
@@ -14,8 +14,9 @@ import {
   StatusDot,
   Textarea,
 } from '../components/common'
-import { VoiceMenu } from '../components/menus'
+import { AssetMenu, deleteAssetAsk, VoiceMenu } from '../components/menus'
 import { api, engineUrl, mediaUrl } from '../lib/api'
+import { usePageMenu } from '../lib/contextMenu'
 import { useLive } from '../lib/events'
 import { timecode } from '../lib/format'
 import { errorToast, useAssets, useProviders, useSettings, useVoices } from '../lib/queries'
@@ -142,6 +143,7 @@ function CloneVoice() {
   const cloners = providers.filter((p) => p.clones)
   return (
     <Section
+      id="clone-voice"
       title="Клонировать голос"
       description="30 секунд – 3 минуты чистой речи одного человека, без музыки. Говори как в роликах: с той же энергией."
     >
@@ -361,6 +363,7 @@ function Speak({ project }: { project: Project }) {
           </Field>
         </div>
         <Textarea
+          id="speak-text"
           rows={5}
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -440,18 +443,29 @@ function Generated({ project }: { project: Project }) {
     >
       <ul className="divide-y">
         {items.map((a) => (
-          <li key={a.id} className="flex items-center gap-3 py-2">
-            <button
-              type="button"
-              className="min-w-0 flex-1 truncate text-left text-sm hover:underline"
-              onClick={() => navigate({ kind: 'media', assetId: a.id })}
-            >
-              {a.name}
-            </button>
-            <span className="text-xs text-muted-foreground">{a.tags.join(' · ')}</span>
-            {/* biome-ignore lint/a11y/useMediaCaption: generated speech, transcript in media */}
-            <audio controls src={mediaUrl(a.id, 'original')} className="h-8" />
-          </li>
+          <AssetMenu key={a.id} asset={a} onOpen={() => navigate({ kind: 'media', assetId: a.id })}>
+            <li className="group flex items-center gap-3 py-2">
+              <button
+                type="button"
+                className="min-w-0 flex-1 truncate text-left text-sm hover:underline"
+                onClick={() => navigate({ kind: 'media', assetId: a.id })}
+              >
+                {a.name}
+              </button>
+              <span className="text-xs text-muted-foreground">{a.tags.join(' · ')}</span>
+              {/* biome-ignore lint/a11y/useMediaCaption: generated speech, transcript in media */}
+              <audio controls src={mediaUrl(a.id, 'original')} className="h-8" />
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="opacity-0 group-hover:opacity-100"
+                onClick={() => void deleteAssetAsk(a)}
+                aria-label="Удалить озвучку"
+              >
+                <Trash2 />
+              </Button>
+            </li>
+          </AssetMenu>
         ))}
       </ul>
     </Section>
@@ -460,6 +474,24 @@ function Generated({ project }: { project: Project }) {
 
 export function VoicePage({ project }: { project: Project }) {
   const providers = useProviders().data ?? []
+  const navigate = useUi((s) => s.navigate)
+  usePageMenu(() => [
+    {
+      label: 'Написать текст для озвучки',
+      icon: Mic,
+      onSelect: () => document.getElementById('speak-text')?.focus(),
+    },
+    {
+      label: 'Клонировать голос',
+      icon: AudioLines,
+      onSelect: () =>
+        document
+          .getElementById('clone-voice')
+          ?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    },
+    'separator',
+    { label: 'Вся озвучка в медиа', icon: FolderOpen, onSelect: () => navigate({ kind: 'media' }) },
+  ])
   return (
     <div className="pb-12">
       <PageHeader

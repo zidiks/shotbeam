@@ -13,6 +13,13 @@ interface EditorState {
   selected: string | null
   /** Pixels per second on the timeline. */
   zoom: number
+  /**
+   * What must stay put on screen when zoom changes: `time` at `x` px from the start of the lanes.
+   * Null: the playhead stays put (or the left edge, when the playhead is out of view).
+   */
+  zoomAnchor: { time: number; x: number } | null
+  /** Bumped to ask the timeline to fit the whole video in view. */
+  fitTick: number
   /** Edges stick and items do not cover each other unless pushed through (see Timeline). */
   magnet: boolean
   /** An item copied with Ctrl+C, pasted at the playhead. */
@@ -20,10 +27,15 @@ interface EditorState {
   setTime: (t: number) => void
   setPlaying: (p: boolean) => void
   select: (id: string | null) => void
-  setZoom: (z: number) => void
+  setZoom: (z: number, anchor?: { time: number; x: number }) => void
+  fitView: () => void
   setMagnet: (m: boolean) => void
   copy: (item: Item | null) => void
 }
+
+/** Pixels per second: a long video whole, down to single frames. */
+export const ZOOM_MIN = 5
+export const ZOOM_MAX = 600
 
 function loadMagnet() {
   try {
@@ -38,12 +50,16 @@ export const useEditor = create<EditorState>((set) => ({
   playing: false,
   selected: null,
   zoom: 80,
+  zoomAnchor: null,
+  fitTick: 0,
   magnet: loadMagnet(),
   clipboard: null,
   setTime: (time) => set({ time: Math.max(0, time) }),
   setPlaying: (playing) => set({ playing }),
   select: (selected) => set({ selected }),
-  setZoom: (zoom) => set({ zoom: Math.max(10, Math.min(400, zoom)) }),
+  setZoom: (zoom, anchor) =>
+    set({ zoom: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom)), zoomAnchor: anchor ?? null }),
+  fitView: () => set((s) => ({ fitTick: s.fitTick + 1 })),
   setMagnet: (magnet) => {
     try {
       localStorage.setItem('shotbeam.magnet', magnet ? '1' : '0')

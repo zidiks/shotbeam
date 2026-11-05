@@ -1,3 +1,4 @@
+export * from './beats'
 export * from './client'
 export * from './composition'
 export * from './ids'

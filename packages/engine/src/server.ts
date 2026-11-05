@@ -13,6 +13,7 @@ import {
   MotionEngine,
   publicSettings,
   Settings,
+  UpscaleModel,
   VoiceProviderId,
 } from '@shotbeam/core'
 import { Hono } from 'hono'
@@ -122,6 +123,7 @@ export function createApp(engine: Engine) {
       python: { ready: python.ready, features: await python.features().catch(() => null) },
       voices: await voices.statuses(),
       motion: await motion.status(),
+      upscaler: engine.upscaler.status(),
     }),
   )
 
@@ -130,7 +132,7 @@ export function createApp(engine: Engine) {
       c,
       z.object({
         features: z
-          .array(z.enum(['whisper', 'ytdlp', 'beats', 'cuda', 'kokoro', 'chatterbox']))
+          .array(z.enum(['whisper', 'ytdlp', 'beats', 'cuda', 'kokoro', 'chatterbox', 'musicgen']))
           .min(1),
       }),
     )
@@ -141,6 +143,36 @@ export function createApp(engine: Engine) {
   })
 
   app.post('/api/setup/remotion', (c) => c.json(motion.setupRemotion().job))
+  // Music from outside: Openverse search and import, MusicGen.
+  app.get('/api/music/openverse', async (c) => {
+    const q = c.req.query()
+    if (!q.q?.trim()) return c.json({ error: 'Пустой запрос' }, 400)
+    return c.json(
+      await engine.music.search(q.q, {
+        license: q.license === 'share-alike' ? 'share-alike' : 'credit',
+        page: q.page ? Number(q.page) : undefined,
+        pageSize: q.pageSize ? Number(q.pageSize) : undefined,
+      }),
+    )
+  })
+  app.post('/api/music/openverse/:id/import', async (c) => {
+    const { projectId } = await body(c, z.object({ projectId: z.string().nullable().optional() }))
+    return c.json(engine.music.importOpenverse(c.req.param('id'), projectId ?? null))
+  })
+  app.post('/api/music/generate', async (c) => {
+    const input = await body(
+      c,
+      z.object({
+        prompt: z.string().min(3).max(500),
+        seconds: z.number().min(2).max(30).default(15),
+        model: z.enum(['small', 'medium']).default('small'),
+        projectId: z.string().nullable().default(null),
+      }),
+    )
+    return c.json(engine.music.generate(input))
+  })
+
+  app.post('/api/setup/upscaler', (c) => c.json(engine.upscaler.install()))
 
   // Settings
 
@@ -251,7 +283,17 @@ export function createApp(engine: Engine) {
       }),
     )
     const asset = store.getAsset(c.req.param('id'))
-    return c.json(store.saveAsset({ ...asset, ...patch }))
+    const saved = store.saveAsset({ ...asset, ...patch })
+    // A file that just became music gets its beats, as if it had been indexed as music.
+    if (patch.role === 'music' && asset.role !== 'music' && asset.hasAudio) {
+      void python
+        .features()
+        .then((f) => {
+          if (f.beats && !indexer.analysis(asset.id).music) indexer.beats(asset.id)
+        })
+        .catch(() => {})
+    }
+    return c.json(saved)
   })
   app.post('/api/assets/:id/reindex', (c) => c.json(indexer.index(c.req.param('id'))))
   app.post('/api/assets/:id/transcribe', async (c) => {
@@ -259,12 +301,25 @@ export function createApp(engine: Engine) {
     return c.json(indexer.transcribe(c.req.param('id'), language))
   })
   app.post('/api/assets/:id/beats', (c) => c.json(indexer.beats(c.req.param('id'))))
+  app.post('/api/assets/:id/upscale', async (c) => {
+    const input = await body(
+      c,
+      z.object({ model: UpscaleModel, scale: z.number().int().min(2).max(4) }),
+    )
+    return c.json(engine.upscaler.upscale(c.req.param('id'), input))
+  })
+  app.get('/api/assets/:id/waveform', (c) => c.json(indexer.waveform(c.req.param('id'))))
   app.get('/api/assets/:id/usage', (c) =>
     c.json({ compositions: assetUsage(store, c.req.param('id')) }),
   )
-  app.delete('/api/assets/:id', (c) => {
-    deleteAsset(engine.library, store, c.req.param('id'), c.req.query('force') === '1')
-    return c.json({ ok: true })
+  app.delete('/api/assets/:id', async (c) => {
+    const r = await deleteAsset(
+      engine.library,
+      store,
+      c.req.param('id'),
+      c.req.query('force') === '1',
+    )
+    return c.json({ ok: true, ...r })
   })
 
   app.get('/api/assets/:id/media/:variant', (c) => {
@@ -532,6 +587,7 @@ export function createApp(engine: Engine) {
     )
     return c.json(compositions.apply(c.req.param('id'), input.ops, input.version))
   })
+  app.get('/api/compositions/:id/beats', (c) => c.json(compositions.beats(c.req.param('id'))))
   app.post('/api/compositions/:id/captions', async (c) => {
     const input = await body(
       c,

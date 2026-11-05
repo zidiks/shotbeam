@@ -183,14 +183,16 @@ export function Section({
   description,
   children,
   actions,
+  id,
 }: {
   title: string
   description?: React.ReactNode
   children: React.ReactNode
   actions?: React.ReactNode
+  id?: string
 }) {
   return (
-    <section className="rounded-xl border bg-card p-5">
+    <section id={id} className="rounded-xl border bg-card p-5">
       <div className="mb-4 flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <h2 className="font-semibold">{title}</h2>

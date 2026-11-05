@@ -3,11 +3,13 @@ import { FISH_MODELS } from '@shotbeam/core'
 import { Button, Input } from '@shotbeam/ui'
 import { useMutation } from '@tanstack/react-query'
 import { invoke, isTauri } from '@tauri-apps/api/core'
-import { Copy, Plug } from 'lucide-react'
+import { Copy, FolderOpen, Plug } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Choice, Field, PageHeader, Section, Segmented, StatusDot } from '../components/common'
+import { copyText, reveal } from '../components/menus'
 import { api } from '../lib/api'
+import { usePageMenu } from '../lib/contextMenu'
 import { errorToast, useSettings, useSetup } from '../lib/queries'
 import { type Theme, useUi } from '../lib/store'
 
@@ -25,6 +27,11 @@ const FEATURES: { id: string; label: string; hint: string }[] = [
     id: 'chatterbox',
     label: 'Chatterbox Multilingual',
     hint: 'Локальный клон голоса, есть русский (PyTorch, несколько ГБ)',
+  },
+  {
+    id: 'musicgen',
+    label: 'MusicGen',
+    hint: 'Генерация музыки по описанию, до 30 с (PyTorch; веса CC BY-NC — не для монетизации)',
   },
 ]
 
@@ -116,12 +123,31 @@ function McpHelp({ library, entry }: { library: string; entry: string }) {
 export function SettingsPage() {
   const settings = useSettings().data
   const setup = useSetup().data
+  usePageMenu(() => [
+    {
+      label: 'Открыть папку библиотеки',
+      icon: FolderOpen,
+      disabled: !setup,
+      onSelect: () => setup && void reveal(setup.library),
+    },
+    {
+      label: 'Копировать путь библиотеки',
+      icon: Copy,
+      disabled: !setup,
+      onSelect: () => setup && void copyText(setup.library, 'Путь скопирован'),
+    },
+  ])
   const theme = useUi((s) => s.theme)
   const setTheme = useUi((s) => s.setTheme)
   const [fishKey, setFishKey] = useState('')
   const patch = useMutation({
     mutationFn: (p: Partial<Settings>) => api.patch('/api/settings', p),
     onSuccess: () => toast.success('Сохранено'),
+    onError: errorToast,
+  })
+  const installUpscaler = useMutation({
+    mutationFn: () => api.post('/api/setup/upscaler'),
+    onSuccess: () => toast('Скачиваю Real-ESRGAN, прогресс — в списке задач сверху'),
     onError: errorToast,
   })
   const install = useMutation({
@@ -256,6 +282,32 @@ export function SettingsPage() {
                 ]}
               />
             </Field>
+          </div>
+        </Section>
+
+        <Section
+          title="Апскейл видео"
+          description="Real-ESRGAN (ncnn, Vulkan): работает на любой современной видеокарте, без Python и CUDA. Около 45 МБ в библиотеку. Запуск — правый клик по видео или картинке в медиа."
+        >
+          <div className="flex items-center gap-3">
+            <div className="min-w-0 flex-1 text-xs text-muted-foreground">
+              animevideov3 — быстрая, для рисованного, игр и стилизации (×2–×4). x4plus — для живой
+              съёмки, в разы медленнее: на слабой видеокарте это часы на ролик.
+            </div>
+            {setup?.upscaler.ready ? (
+              <StatusDot ok label="установлен" />
+            ) : setup && !setup.upscaler.supported ? (
+              <StatusDot ok={false} label="нет сборки для этой системы" />
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => installUpscaler.mutate()}
+                loading={installUpscaler.isPending}
+              >
+                Установить
+              </Button>
+            )}
           </div>
         </Section>
 

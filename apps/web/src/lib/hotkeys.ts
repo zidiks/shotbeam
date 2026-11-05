@@ -27,8 +27,9 @@ export function matches(e: KeyboardEvent, c: Combo): boolean {
 
 /** Typing in a field: single-letter shortcuts must not fire. */
 export function typing(e: KeyboardEvent): boolean {
-  const t = e.target as HTMLElement | null
-  return !!t?.closest('input, textarea, select, [contenteditable="true"]')
+  // The target is the window or the document when nothing has focus.
+  const t = e.target
+  return t instanceof Element && !!t.closest('input, textarea, select, [contenteditable="true"]')
 }
 
 const KEY_NAMES: Record<string, string> = {
@@ -47,6 +48,9 @@ const KEY_NAMES: Record<string, string> = {
   Comma: ',',
   Slash: '/',
   Enter: 'Enter',
+  // Mouse, for the list only (never matched against keys).
+  Wheel: 'колёсико',
+  MiddleDrag: 'средняя кнопка',
 }
 
 export function comboLabel(c: Combo): string {
@@ -136,8 +140,21 @@ export const SHORTCUTS: ShortcutGroup[] = [
         combos: [{ code: 'ArrowUp' }, { code: 'ArrowDown' }],
       },
       { label: 'В начало / в конец', combos: [{ code: 'Home' }, { code: 'End' }] },
-      { label: 'Масштаб таймлайна', combos: [{ code: 'Equal' }, { code: 'Minus' }] },
+      { label: 'Масштаб таймлайна (у плейхеда)', combos: [{ code: 'Equal' }, { code: 'Minus' }] },
+      { label: 'Вписать ролик в таймлайн', combos: [{ code: 'KeyZ', shift: true }] },
+      { label: 'Прокрутка по времени', combos: [{ code: 'Wheel' }] },
+      { label: 'Прокрутка по дорожкам', combos: [{ code: 'Wheel', shift: true }] },
+      { label: 'Масштаб у курсора (и щипок на тачпаде)', combos: [{ code: 'Wheel', mod: true }] },
+      { label: 'Двигать область', combos: [{ code: 'MiddleDrag' }] },
+      {
+        label: 'К предыдущему / следующему биту музыки',
+        combos: [
+          { code: 'ArrowUp', shift: true },
+          { code: 'ArrowDown', shift: true },
+        ],
+      },
       { label: 'Магнит / наложение', combos: [{ code: 'KeyM' }] },
+      { label: 'Склейки дорожки в бит', combos: [{ code: 'KeyB', shift: true }] },
       { label: 'Текст на плейхеде', combos: [{ code: 'KeyT' }] },
       { label: 'Сабы из речи', combos: [{ code: 'KeyC', shift: true }] },
       {

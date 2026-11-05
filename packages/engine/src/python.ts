@@ -22,7 +22,14 @@ import type { Library } from './paths'
 
 export const WORKER = join(dirname(fileURLToPath(import.meta.url)), '..', 'python', 'worker.py')
 
-export type PythonFeature = 'whisper' | 'ytdlp' | 'beats' | 'cuda' | 'kokoro' | 'chatterbox'
+export type PythonFeature =
+  | 'whisper'
+  | 'ytdlp'
+  | 'beats'
+  | 'cuda'
+  | 'kokoro'
+  | 'chatterbox'
+  | 'musicgen'
 
 export const FEATURE_PACKAGES: Record<PythonFeature, string[]> = {
   whisper: ['faster-whisper'],
@@ -32,6 +39,8 @@ export const FEATURE_PACKAGES: Record<PythonFeature, string[]> = {
   cuda: ['nvidia-cublas-cu12', 'nvidia-cudnn-cu12'],
   kokoro: ['kokoro-onnx', 'soundfile'],
   chatterbox: ['chatterbox-tts'],
+  // MusicGen through Hugging Face transformers; the weights download on first use.
+  musicgen: ['transformers', 'torch', 'soundfile'],
 }
 
 const KOKORO_FILES = {
@@ -78,6 +87,7 @@ export class Python {
       cuda: false,
       kokoro: false,
       chatterbox: false,
+      musicgen: false,
     }
     if (!this.ready) return none
     const out = await this.call('check', [])

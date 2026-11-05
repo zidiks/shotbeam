@@ -15,15 +15,20 @@ import {
   query,
   type Reference,
   type Source,
+  UpscaleModel,
   type Voice,
   VoiceProviderId,
 } from '@shotbeam/core'
 import { z } from 'zod'
 import {
   assetLine,
+  type BeatInfo,
+  beatsText,
+  bestWindow,
   compositionText,
   describeAsset,
   formatText,
+  musicLine,
   pacing,
   referenceLine,
   t,
@@ -44,6 +49,7 @@ How to work:
 - Compositions are edited with edit_composition (atomic batches of ops). Use add_captions after placing the voice or the talking clips. render with draft:true first, final when the user agrees.
 - Voice: speak (pick the provider the user asks for; default from settings). Cloned voices come from create_voice with a recording of the person.
 - Motion: two engines, HyperFrames (HTML+GSAP) and Remotion (React). Use the one the user picks; templates are listed by list_motion_templates and can be written with save_motion_template.
+- Music: find_music picks tracks from the music library by mood, tempo and energy (it shows each track's key, brightness, busyness and energy shape). Tag the moods you hear in the numbers and names with update_asset (tags like "mood:upbeat") so they are found next time. Put music on A2 with duck:true under a voice, starting where find_music says the energy is. get_composition lists the beats on the timeline; {op:"cutToBeats"} lands every cut of a track on them (the format's pacing.cutOnBeat asks for it). When the library has nothing that fits: search_music_online (Openverse, Creative Commons; import_music brings a track in, and a CC BY one needs the credit from its notes in the video description), Pixabay through the link it gives (the user downloads; YouTube Content ID may claim it), or generate_music (MusicGen on this computer, up to 30 s; its CC BY-NC weights make it unfit for monetised videos — say so).
 - Trending platform sounds are added in the app when posting, never rendered into the file: put them in the format's music.trendingSound.
 Everything you change shows up live in the Shotbeam app, where the user can fine-tune it by hand.`
 
@@ -123,6 +129,18 @@ export function createServer(api: EngineClient): McpServer {
       }),
     )
     return names
+  }
+
+  /** The edit as text, with the beats of its music. */
+  const editText = async (c: Composition) => {
+    const names = await assetNames(c)
+    const text = compositionText(c, names)
+    try {
+      const beats = beatsText(await api.get<BeatInfo>(`/api/compositions/${c.id}/beats`), names)
+      return beats ? `${text}\n\n${beats}` : text
+    } catch {
+      return text
+    }
   }
 
   // Projects and media
@@ -382,6 +400,33 @@ export function createServer(api: EngineClient): McpServer {
   )
 
   server.registerTool(
+    'upscale',
+    {
+      title: 'Upscale a video or image',
+      description:
+        'Makes a sharper, bigger copy of a video or image with Real-ESRGAN (a new asset next to the original, tagged "upscaled"). model: "animevideo" (realesr-animevideov3: made for video, fast, best for drawn, game and stylised footage; scale 2, 3 or 4) or "general" (realesrgan-x4plus: camera footage, many times slower — on a weak GPU hours for a whole clip, so use it for short pieces). Pick by what the footage is, and a scale that reaches the composition size (e.g. 540x960 → ×2 for 1080x1920). Waits up to `seconds` (default 60), then returns the job to follow with wait_job. Needs Real-ESRGAN installed in Settings.',
+      inputSchema: {
+        id: z.string(),
+        model: UpscaleModel,
+        scale: z.number().int().min(2).max(4),
+        seconds: z.number().int().min(0).max(300).optional(),
+      },
+    },
+    ({ id, model, scale, seconds }) =>
+      run(async () => {
+        const job = await api.post<Job>(`/api/assets/${id}/upscale`, { model, scale })
+        const done = await wait(job, seconds ?? 60)
+        if (done.status === 'done') {
+          const r = done.result as { assetId: string }
+          const { asset } = await api.get<{ asset: Asset }>(`/api/assets/${r.assetId}`)
+          return `Upscaled: ${assetLine(asset).slice(2)}`
+        }
+        return `${jobText(done)}
+Still working: follow it with wait_job ${done.id}.`
+      }),
+  )
+
+  server.registerTool(
     'update_asset',
     {
       title: 'Tag or describe media',
@@ -398,6 +443,188 @@ export function createServer(api: EngineClient): McpServer {
       run(async () => {
         const a = await api.patch<Asset>(`/api/assets/${id}`, patch)
         return `Saved: ${assetLine(a).slice(2)}`
+      }),
+  )
+
+  server.registerTool(
+    'find_music',
+    {
+      title: 'Find music',
+      description:
+        'Tracks of the music library (role music) ranked by mood words (matched in tags, notes and names), tempo (half and double time count) and length. Each line gives BPM, key, brightness, busyness and the energy shape over the track; with seconds, where the most energetic stretch of that length starts (on a beat). format: take mood and BPM from a format.',
+      inputSchema: {
+        project: z.string().optional(),
+        mood: z.string().optional(),
+        bpm: z.number().positive().optional(),
+        seconds: z.number().positive().optional(),
+        format: z.string().optional(),
+        limit: z.number().int().min(1).max(50).optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    ({ project, mood, bpm, seconds, format, limit }) =>
+      run(async () => {
+        const projectId = project ? (await projectByName(project)).id : undefined
+        if (format) {
+          const f = await api.get<Format>(`/api/formats/${format}`)
+          mood ??= f.recipe.music.mood || undefined
+          bpm ??= f.recipe.music.bpm ?? undefined
+          seconds ??= f.recipe.duration.max
+        }
+        const r = await api.get<{ items: Asset[] }>(
+          `/api/assets${query({ projectId, role: 'music', limit: 200 })}`,
+        )
+        if (!r.items.length)
+          return 'No music yet. Connect a folder of tracks with add_source (role "music", project null to share it).'
+        const words = (mood ?? '')
+          .toLowerCase()
+          .split(/[\s,]+/)
+          .filter((w) => w.length > 2)
+        const rows = await Promise.all(
+          r.items.map(async (a) => {
+            const { analysis } = await api.get<{ analysis: Analysis }>(`/api/assets/${a.id}`)
+            const m = analysis.music
+            const text = `${a.name} ${a.tags.join(' ')} ${a.notes}`.toLowerCase()
+            let score = words.filter((w) => text.includes(w)).length * 2
+            const target = bpm
+            if (target && m) {
+              const off = Math.min(
+                ...[m.bpm, m.bpm * 2, m.bpm / 2].map((b) => Math.abs(b - target)),
+              )
+              score -= off / 10
+            }
+            if (seconds && a.duration && a.duration < seconds) score -= 3
+            return { a, m, score, tagged: a.tags.some((t) => !/^\d+ ?bpm$/i.test(t)) || !!a.notes }
+          }),
+        )
+        rows.sort((x, y) => y.score - x.score)
+        const shown = rows.slice(0, limit ?? 15)
+        const out = [
+          `${rows.length} track(s)${mood ? `, mood "${mood}"` : ''}${bpm ? `, ~${bpm} BPM` : ''}${seconds ? `, ${seconds} s` : ''}:`,
+        ]
+        for (const { a, m, tagged } of shown) {
+          out.push(assetLine(a))
+          if (a.notes) out.push(`    notes: ${a.notes}`)
+          if (!m) {
+            out.push(
+              `    ${a.status === 'ready' ? 'not analysed (local beats model off?)' : `${a.status}…`}`,
+            )
+            continue
+          }
+          out.push(`    ${musicLine(m)}${tagged ? '' : ' — no mood tags yet'}`)
+          if (seconds) {
+            const w = bestWindow(m, seconds)
+            if (w.energy >= 0)
+              out.push(`    best ${seconds} s from ${t(w.in)} (in: ${w.in.toFixed(2)})`)
+          }
+        }
+        const old = rows.filter((x) => x.m && !x.m.curve).length
+        if (old)
+          out.push(
+            `${old} track(s) were analysed before energy and key were measured; reindex them in the app to get those.`,
+          )
+        return out.join('\n')
+      }),
+  )
+
+  server.registerTool(
+    'search_music_online',
+    {
+      title: 'Search music online (Openverse)',
+      description:
+        'Creative Commons music from Openverse (Jamendo, Freesound, ccMixter, Wikimedia…), only licences that allow commercial use and putting it under a video: CC0, public domain and CC BY (credit needed) by default; share_alike adds CC BY-SA (the video would have to be shared under it too, rarely what the user wants). Search in English with genre / mood / instrument words. Bring one in with import_music. Also gives a Pixabay Music search link for the user to open (no API there).',
+      inputSchema: {
+        query: z.string().min(2),
+        share_alike: z.boolean().optional(),
+        page: z.number().int().min(1).optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    ({ query: q, share_alike, page }) =>
+      run(async () => {
+        const r = await api.get<{
+          total: number
+          results: {
+            id: string
+            title: string
+            creator: string
+            license: string
+            duration: number | null
+            source: string
+            genres: string[]
+            tags: string[]
+            landing: string
+          }[]
+          pixabay: string
+        }>(
+          `/api/music/openverse${query({ q, license: share_alike ? 'share-alike' : 'credit', page })}`,
+        )
+        const out = [`${r.total} track(s) on Openverse for "${q}":`]
+        for (const x of r.results)
+          out.push(
+            `- ${x.title}${x.creator ? ` — ${x.creator}` : ''} [${x.id}] ${t(x.duration)} ${x.license} (${x.source})${x.genres.length || x.tags.length ? ` #${[...x.genres, ...x.tags].slice(0, 8).join(' #')}` : ''}`,
+          )
+        if (!r.results.length) out.push('Nothing; try broader words (genre, mood, instrument).')
+        out.push(
+          '',
+          `Pixabay Music (no API; the user opens it, downloads, then import_file with role "music"; YouTube Content ID may claim some tracks): ${r.pixabay}`,
+        )
+        return out.join('\n')
+      }),
+  )
+
+  server.registerTool(
+    'import_music',
+    {
+      title: 'Import a track from Openverse',
+      description:
+        'Downloads an Openverse track (id from search_music_online) into the shared music library; its beats and mood numbers are analysed like any track. Returns the asset and the credit line to put in the video description for CC BY.',
+      inputSchema: { id: z.string(), project: z.string().optional() },
+    },
+    ({ id, project }) =>
+      run(async () => {
+        const projectId = project ? (await projectByName(project)).id : null
+        const job = await wait(
+          await api.post<Job>(`/api/music/openverse/${encodeURIComponent(id)}/import`, {
+            projectId,
+          }),
+          120,
+        )
+        if (job.status !== 'done') return jobText(job)
+        const r = job.result as { assetId: string; attribution: string; existed: boolean }
+        const { asset } = await api.get<{ asset: Asset }>(`/api/assets/${r.assetId}`)
+        return [
+          `${r.existed ? 'Already in the library' : 'Imported'}: ${assetLine(asset).slice(2)}`,
+          asset.notes,
+          'Beats and mood numbers arrive after analysis (find_music / get_asset).',
+        ].join('\n')
+      }),
+  )
+
+  server.registerTool(
+    'generate_music',
+    {
+      title: 'Generate music (MusicGen, local)',
+      description:
+        'An instrumental from a text prompt with MusicGen on this computer, 2–30 s. Prompt in English: genre, mood, instruments, tempo ("upbeat synthwave, punchy drums, 120 bpm"). model small is faster (a weak GPU or CPU takes minutes), medium better. The weights are CC BY-NC 4.0: tell the user it is not for monetised videos. Waits up to 5 minutes.',
+      inputSchema: {
+        prompt: z.string().min(3).max(500),
+        seconds: z.number().min(2).max(30).optional(),
+        model: z.enum(['small', 'medium']).optional(),
+        project: z.string().optional(),
+      },
+    },
+    ({ prompt, seconds, model, project }) =>
+      run(async () => {
+        const projectId = project ? (await projectByName(project)).id : null
+        const job = await wait(
+          await api.post<Job>('/api/music/generate', { prompt, seconds, model, projectId }),
+          300,
+        )
+        if (job.status !== 'done') return `${jobText(job)}\nFollow it with wait_job ${job.id}.`
+        const { assetId } = job.result as { assetId: string }
+        const { asset } = await api.get<{ asset: Asset }>(`/api/assets/${assetId}`)
+        return `Generated: ${assetLine(asset).slice(2)}\nNot for monetised videos (MusicGen weights are CC BY-NC).`
       }),
   )
 
@@ -794,7 +1021,7 @@ export function createServer(api: EngineClient): McpServer {
     ({ id }) =>
       run(async () => {
         const c = await api.get<Composition>(`/api/compositions/${id}`)
-        return compositionText(c, await assetNames(c))
+        return await editText(c)
       }),
   )
 
@@ -804,7 +1031,7 @@ export function createServer(api: EngineClient): McpServer {
       title: 'Edit a video',
       description: `Applies ops in order, all or nothing. Times in seconds.
 Tracks are listed top to bottom: visual tracks V3, V2, V1 (V1 is the main one; higher tracks draw over lower ones; text and captions sit on visual tracks too), then audio tracks A1, A2… (A1 voice, A2 music by default). Items on one track should not overlap unless the user wants a layer over another: put overlays on a higher track instead.
-Ops: add {item, trackId?, level?} (without trackId: level 0 = V1/A1, 1 = V2/A2…; it goes on the first free track from that level outward, new tracks appear as needed; no start = after the last item of that track), update {id, patch}, remove {id, ripple?}, move {id, start?, trackId?}, split {id, at}, reorder {id, index}, closeGaps {trackId}, addTrack {kind: "visual"|"audio"} (visual on top, audio at the bottom), removeTrack {trackId}, track {trackId, patch: {name, muted, hidden}}, set {patch: {name, background, width, height, fps}}.
+Ops: add {item, trackId?, level?} (without trackId: level 0 = V1/A1, 1 = V2/A2…; it goes on the first free track from that level outward, new tracks appear as needed; no start = after the last item of that track), update {id, patch}, remove {id, ripple?}, move {id, start?, trackId?}, split {id, at}, reorder {id, index}, closeGaps {trackId}, cutToBeats {trackId, every?} (re-times the shots of a visual track back to back so every cut lands on a beat of the music on the audio tracks, keeping the pacing as near as it can; every: 1 each beat, 2 every other, 4 every bar), addTrack {kind: "visual"|"audio"} (visual on top, audio at the bottom), removeTrack {trackId}, track {trackId, patch: {name, muted, hidden}}, set {patch: {name, background, width, height, fps}}.
 Items:
 - clip {type:"clip", assetId, in, out, start?, speed=1, volume=1, fit:"cover"|"contain", focus:{x,y} (0..1 crop centre), zoom>=1, fadeIn, fadeOut}
 - audio {type:"audio", assetId, in, out, start?, volume=1, duck (lower under the voice), fadeIn, fadeOut}
@@ -824,7 +1051,7 @@ Pass version (from get_composition) to avoid overwriting the user's edits made m
           `/api/compositions/${id}/ops`,
           { ops, version },
         )
-        return `${r.created.length ? `Created ids: ${r.created.join(', ')}\n` : ''}${compositionText(r.composition, await assetNames(r.composition))}`
+        return `${r.created.length ? `Created ids: ${r.created.join(', ')}\n` : ''}${await editText(r.composition)}`
       }),
   )
 
@@ -842,7 +1069,7 @@ Pass version (from get_composition) to avoid overwriting the user's edits made m
       ({ id }) =>
         run(async () => {
           const c = await api.post<Composition>(`/api/compositions/${id}/${direction}`)
-          return compositionText(c, await assetNames(c))
+          return await editText(c)
         }),
     )
   }
@@ -865,7 +1092,7 @@ Pass version (from get_composition) to avoid overwriting the user's edits made m
           style,
           source,
         })
-        return compositionText(r.composition, await assetNames(r.composition))
+        return editText(r.composition)
       }),
   )
 

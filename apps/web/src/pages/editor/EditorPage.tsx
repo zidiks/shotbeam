@@ -1,4 +1,5 @@
 import type {
+  Analysis,
   Asset,
   AssetRole,
   Composition,
@@ -6,7 +7,7 @@ import type {
   Job,
   MotionEngine,
 } from '@shotbeam/core'
-import { compositionDuration, findItem, isFree, itemEnd } from '@shotbeam/core'
+import { compositionDuration, findItem, isFree, itemEnd, timelineBeats } from '@shotbeam/core'
 import {
   Button,
   DropdownMenu,
@@ -22,8 +23,15 @@ import {
 } from '@shotbeam/ui'
 import { useMutation, useQueries } from '@tanstack/react-query'
 import {
+  ArrowLeft,
+  AudioLines,
   Captions,
+  ChevronLeft,
+  ChevronRight,
   Clapperboard,
+  Film,
+  FolderOpen,
+  Music2,
   Pause,
   Play,
   Plus,
@@ -36,9 +44,10 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { AssetCard } from '../../components/AssetCard'
-import { Busy, Progress, Segmented } from '../../components/common'
+import { Busy, Empty, Progress, Segmented } from '../../components/common'
 import { AssetMenu } from '../../components/menus'
 import { api, mediaUrl } from '../../lib/api'
+import { type MenuEntry, useMenuZone, usePageMenu } from '../../lib/contextMenu'
 import { useJobFor } from '../../lib/events'
 import { comboLabel, matches, typing } from '../../lib/hotkeys'
 import {
@@ -54,6 +63,7 @@ import {
 } from '../../lib/queries'
 import { useUi } from '../../lib/store'
 import { Inspector } from './Inspector'
+import { Splitter, useLayout } from './layout'
 import { Preview } from './Preview'
 import { startClock, useEditor } from './state'
 import { Timeline } from './Timeline'
@@ -62,8 +72,38 @@ import { Timeline } from './Timeline'
 function MediaBin({ projectId, onAdd }: { projectId: string; onAdd: (a: Asset) => void }) {
   const [role, setRole] = useState<AssetRole>('footage')
   const assets = useAssets({ projectId, role }).data?.items ?? []
+  const navigate = useUi((s) => s.navigate)
+  useMenuZone('bin', () => [
+    ...(
+      [
+        ['footage', 'Видео'],
+        ['voice', 'Голос'],
+        ['music', 'Музыка'],
+        ['motion', 'Моушн'],
+      ] as const
+    ).map(
+      ([value, label]): MenuEntry => ({
+        label: `Показать: ${label}${value === role ? ' ✓' : ''}`,
+        icon:
+          value === 'voice'
+            ? AudioLines
+            : value === 'music'
+              ? Music2
+              : value === 'motion'
+                ? Wand2
+                : Film,
+        onSelect: () => setRole(value),
+      }),
+    ),
+    'separator',
+    {
+      label: 'Открыть медиатеку',
+      icon: FolderOpen,
+      onSelect: () => navigate({ kind: 'media' }),
+    },
+  ])
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col" data-menu="bin">
       <div className="border-b p-2">
         <Segmented
           value={role}
@@ -113,13 +153,20 @@ function useAssetMap(c: Composition | undefined) {
   const results = useQueries({
     queries: ids.map((id) => ({
       queryKey: keys.asset(id),
-      queryFn: () => api.get<{ asset: Asset }>(`/api/assets/${id}`),
+      queryFn: () => api.get<{ asset: Asset; analysis: Analysis }>(`/api/assets/${id}`),
     })),
   })
   return useMemo(() => {
-    const m = new Map<string, Asset>()
-    for (const r of results) if (r.data) m.set(r.data.asset.id, r.data.asset)
-    return m
+    const assets = new Map<string, Asset>()
+    // Beat times of the music, in each file's own time.
+    const beats = new Map<string, number[]>()
+    for (const r of results) {
+      if (!r.data) continue
+      assets.set(r.data.asset.id, r.data.asset)
+      const music = r.data.analysis?.music
+      if (music) beats.set(r.data.asset.id, music.beats)
+    }
+    return { assets, beats }
   }, [results])
 }
 
@@ -127,7 +174,9 @@ export function EditorPage({ id }: { id: string }) {
   const comp = useComposition(id)
   const c = comp.data
   const ops = useCompositionOps(id)
-  const assets = useAssetMap(c)
+  const { assets, beats: beatsOf } = useAssetMap(c)
+  const sizes = useLayout()
+  const beats = useMemo(() => (c ? timelineBeats(c, (id) => beatsOf.get(id)) : []), [c, beatsOf])
   const settings = useSettings().data
   const templates = useMotionTemplates().data ?? []
   const navigate = useUi((s) => s.navigate)
@@ -175,8 +224,8 @@ export function EditorPage({ id }: { id: string }) {
 
   // Every editor shortcut (the list the help dialog shows is lib/hotkeys.ts). Handlers read the
   // latest state through refs, so the listener is added once.
-  const actions = useRef({ apply, undoRedo, captions, render })
-  actions.current = { apply, undoRedo, captions, render }
+  const actions = useRef({ apply, undoRedo, captions, render, beats })
+  actions.current = { apply, undoRedo, captions, render, beats }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (typing(e) || e.defaultPrevented) return
@@ -206,6 +255,7 @@ export function EditorPage({ id }: { id: string }) {
       if (matches(e, { code: 'End' })) return done(() => s.setTime(compositionDuration(comp)))
       if (matches(e, { code: 'Escape' })) return s.select(null)
       if (matches(e, { code: 'KeyM' })) return s.setMagnet(!s.magnet)
+      if (matches(e, { code: 'KeyZ', shift: true })) return done(() => s.fitView())
       if (matches(e, { code: 'Equal' }) || matches(e, { code: 'NumpadAdd' }))
         return s.setZoom(s.zoom * 1.25)
       if (matches(e, { code: 'Minus' }) || matches(e, { code: 'NumpadSubtract' }))
@@ -226,6 +276,29 @@ export function EditorPage({ id }: { id: string }) {
           },
         ])
       if (matches(e, { code: 'KeyC', shift: true })) return a.captions.mutate()
+      // Cuts of the selected item's visual track (else V1) onto every beat of the music.
+      if (matches(e, { code: 'KeyB', shift: true })) {
+        done()
+        const track =
+          sel?.track.kind === 'visual'
+            ? sel.track
+            : comp.tracks.filter((t) => t.kind === 'visual').at(-1)
+        if (!a.beats.length) return toast.info('Положите на аудио-дорожку музыку с битами')
+        if (track?.items.length) a.apply([{ op: 'cutToBeats', trackId: track.id }])
+        return
+      }
+      if (
+        matches(e, { code: 'ArrowUp', shift: true }) ||
+        matches(e, { code: 'ArrowDown', shift: true })
+      ) {
+        done()
+        const next =
+          e.code === 'ArrowUp'
+            ? [...a.beats].reverse().find((b) => b < s.time - 1e-3)
+            : a.beats.find((b) => b > s.time + 1e-3)
+        if (next !== undefined) s.setTime(next)
+        return
+      }
 
       // Playhead.
       for (const [code, dir] of [
@@ -310,12 +383,138 @@ export function EditorPage({ id }: { id: string }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // Right-click menus: the editor as a whole, and the preview.
+  const textAtPlayhead = (): CompositionOp => ({
+    op: 'add',
+    item: {
+      type: 'text',
+      start: useEditor.getState().time,
+      duration: 2.5,
+      text: 'Текст',
+      style: { y: 0.2 },
+      fadeIn: 0.15,
+      fadeOut: 0.15,
+    },
+  })
+  const renderEntries = (): MenuEntry[] => [
+    {
+      label: 'Черновой рендер',
+      icon: Clapperboard,
+      shortcut: comboLabel({ code: 'KeyE', mod: true }),
+      disabled: render.isPending,
+      onSelect: () => render.mutate(true),
+    },
+    {
+      label: 'Финальный рендер',
+      icon: Clapperboard,
+      shortcut: comboLabel({ code: 'KeyE', mod: true, shift: true }),
+      disabled: render.isPending,
+      onSelect: () => render.mutate(false),
+    },
+  ]
+  usePageMenu(() => {
+    if (!latest.current) return []
+    return [
+      {
+        label: 'Отменить',
+        icon: Undo2,
+        shortcut: comboLabel({ code: 'KeyZ', mod: true }),
+        disabled: !history?.undo,
+        onSelect: () => undoRedo.mutate('undo'),
+      },
+      {
+        label: 'Повторить',
+        icon: Redo2,
+        shortcut: comboLabel({ code: 'KeyZ', mod: true, shift: true }),
+        disabled: !history?.redo,
+        onSelect: () => undoRedo.mutate('redo'),
+      },
+      'separator',
+      {
+        label: 'Текст на плейхеде',
+        icon: Type,
+        shortcut: comboLabel({ code: 'KeyT' }),
+        onSelect: () => apply([textAtPlayhead()]),
+      },
+      {
+        label: 'Сабы из речи',
+        icon: Captions,
+        shortcut: comboLabel({ code: 'KeyC', shift: true }),
+        onSelect: () => captions.mutate(),
+      },
+      'separator',
+      ...renderEntries(),
+      'separator',
+      { label: 'К списку видео', icon: ArrowLeft, onSelect: () => navigate({ kind: 'videos' }) },
+    ]
+  })
+  useMenuZone('preview', () => {
+    const s = useEditor.getState()
+    const comp = latest.current
+    if (!comp) return []
+    const frame = 1 / comp.fps
+    return [
+      {
+        label: s.playing ? 'Пауза' : 'Играть',
+        icon: s.playing ? Pause : Play,
+        shortcut: comboLabel({ code: 'Space' }),
+        onSelect: () => s.setPlaying(!s.playing),
+      },
+      {
+        label: 'В начало',
+        icon: SkipBack,
+        shortcut: comboLabel({ code: 'Home' }),
+        onSelect: () => s.setTime(0),
+      },
+      {
+        label: 'Кадр назад',
+        icon: ChevronLeft,
+        shortcut: comboLabel({ code: 'ArrowLeft' }),
+        onSelect: () => s.setTime(s.time - frame),
+      },
+      {
+        label: 'Кадр вперёд',
+        icon: ChevronRight,
+        shortcut: comboLabel({ code: 'ArrowRight' }),
+        onSelect: () => s.setTime(s.time + frame),
+      },
+      'separator',
+      {
+        label: 'Текст на этом кадре',
+        icon: Type,
+        shortcut: comboLabel({ code: 'KeyT' }),
+        onSelect: () => apply([textAtPlayhead()]),
+      },
+      {
+        label: 'Сабы из речи',
+        icon: Captions,
+        shortcut: comboLabel({ code: 'KeyC', shift: true }),
+        onSelect: () => captions.mutate(),
+      },
+      'separator',
+      ...renderEntries(),
+    ]
+  })
+
   if (!c)
     return comp.isLoading ? (
       <div className="p-6">
         <Busy label="Открываю" />
       </div>
-    ) : null
+    ) : (
+      // Deleted meanwhile, or a remembered video from another library.
+      <Empty
+        icon={Film}
+        title="Видео не найдено"
+        action={
+          <Button variant="brand" onClick={() => navigate({ kind: 'videos' })}>
+            К списку видео
+          </Button>
+        }
+      >
+        Его удалили, или оно из другой библиотеки.
+      </Empty>
+    )
 
   const addAsset = (a: Asset) =>
     apply([
@@ -500,11 +699,12 @@ export function EditorPage({ id }: { id: string }) {
 
       {/* Bin · preview · inspector */}
       <div className="flex min-h-0 flex-1">
-        <aside className="w-64 shrink-0 border-r bg-sidebar">
+        <aside className="shrink-0 bg-sidebar" style={{ width: sizes.bin }}>
           <MediaBin projectId={c.projectId} onAdd={addAsset} />
         </aside>
+        <Splitter panel="bin" sign={1} />
         <div className="flex min-w-0 flex-1 flex-col bg-muted/40">
-          <div className="min-h-0 flex-1 p-4">
+          <div className="min-h-0 flex-1 p-4" data-menu="preview">
             <Preview composition={c} />
           </div>
           <div className="flex items-center justify-center gap-1 pb-2">
@@ -521,14 +721,16 @@ export function EditorPage({ id }: { id: string }) {
             </Button>
           </div>
         </div>
-        <aside className="w-80 shrink-0 overflow-y-auto border-l bg-card">
+        <Splitter panel="inspector" sign={-1} />
+        <aside className="shrink-0 overflow-y-auto bg-card" style={{ width: sizes.inspector }}>
           <Inspector composition={c} assets={assets} apply={apply} />
         </aside>
       </div>
 
       {/* Timeline */}
-      <div className="h-[260px] shrink-0">
-        <Timeline composition={c} assets={assets} apply={apply} />
+      <Splitter panel="timeline" sign={-1} />
+      <div className="shrink-0" style={{ height: sizes.timeline }}>
+        <Timeline composition={c} assets={assets} beats={beats} apply={apply} />
       </div>
       {selected && !findItem(c, selected) ? <SelectionReset onReset={() => select(null)} /> : null}
     </div>

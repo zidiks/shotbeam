@@ -1,12 +1,34 @@
 import type { Format, Project, Reference } from '@shotbeam/core'
 import { Button, cn, Input, Spinner } from '@shotbeam/ui'
 import { useMutation } from '@tanstack/react-query'
-import { CircleAlert, Link2, RotateCcw, Sparkles, Trash2, X } from 'lucide-react'
+import {
+  Bot,
+  CircleAlert,
+  ClipboardPaste,
+  Copy,
+  ExternalLink,
+  Hash,
+  Link2,
+  RotateCcw,
+  Save,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react'
+import type * as React from 'react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Empty, PageHeader, Progress, Textarea } from '../components/common'
-import { ReferenceMenu } from '../components/menus'
+import {
+  copyReferenceId,
+  copyReferencePrompt,
+  copyText,
+  DeleteOnHover,
+  deleteReferenceAsk,
+  ReferenceMenu,
+} from '../components/menus'
 import { api, engineUrl, mediaUrl } from '../lib/api'
+import { useMenuZone, usePageMenu } from '../lib/contextMenu'
 import { useJobFor } from '../lib/events'
 import { timecode } from '../lib/format'
 import { errorToast, useAsset, useReference, useReferences } from '../lib/queries'
@@ -24,22 +46,28 @@ function ReferenceCard({
   r,
   selected,
   onClick,
-}: {
+  onDelete,
+  ...rest
+}: Omit<React.ComponentProps<'button'>, 'onClick'> & {
   r: Reference
   selected: boolean
   onClick: () => void
+  onDelete: () => void
 }) {
   const job = useJobFor('reference', r.id)
   return (
+    // `rest` carries what the wrapping menu trigger adds (ref, onContextMenu, data-state).
     <button
+      {...rest}
       type="button"
       onClick={onClick}
       className={cn(
-        'flex flex-col overflow-hidden rounded-lg border bg-card text-left transition-colors hover:border-ring/60',
+        'group flex flex-col overflow-hidden rounded-lg border bg-card text-left transition-colors hover:border-ring/60',
         selected && 'border-brand ring-2 ring-brand/30',
       )}
     >
       <div className="relative aspect-[9/12] w-full bg-muted">
+        <DeleteOnHover label="Удалить референс" onDelete={onDelete} />
         {r.status !== 'new' && r.status !== 'downloading' ? (
           <img
             src={engineUrl(`/api/references/${r.id}/thumb`)}
@@ -116,6 +144,42 @@ function ReferencePanel({
     onSuccess: (f) => navigate({ kind: 'formats', id: f.id }),
     onError: errorToast,
   })
+  useMenuZone('reference-panel', () => {
+    if (!ref) return []
+    const r = ref.reference
+    return [
+      { heading: r.title || r.url },
+      {
+        label: 'Открыть оригинал',
+        icon: ExternalLink,
+        onSelect: () => window.open(r.url, '_blank', 'noreferrer'),
+      },
+      {
+        label: 'Копировать ссылку',
+        icon: Copy,
+        onSelect: () => void copyText(r.url, 'Ссылка скопирована'),
+      },
+      'separator',
+      {
+        label: r.analysis ? 'Копировать промпт: сделать формат' : 'Копировать промпт: разобрать',
+        icon: Bot,
+        onSelect: () => void copyReferencePrompt(r),
+      },
+      { label: 'Копировать id', icon: Hash, onSelect: () => void copyReferenceId(r) },
+      'separator',
+      { label: 'Сохранить разбор', icon: Save, onSelect: () => save.mutate() },
+      { label: 'Сделать формат', icon: Sparkles, onSelect: () => toFormat.mutate() },
+      { label: 'Скачать заново', icon: RotateCcw, onSelect: () => retry.mutate() },
+      'separator',
+      {
+        label: 'Удалить',
+        icon: Trash2,
+        destructive: true,
+        onSelect: () => void deleteReferenceAsk(r).then((ok) => ok && onClose()),
+      },
+      { label: 'Закрыть панель', icon: X, onSelect: onClose },
+    ]
+  })
   if (!ref) return <aside className="w-[460px] shrink-0 border-l bg-card" />
   const r = ref.reference
   const an = assetData?.analysis
@@ -124,7 +188,10 @@ function ReferencePanel({
   const words = an?.transcript?.segments.flatMap((s) => s.words) ?? []
 
   return (
-    <aside className="flex w-[460px] shrink-0 flex-col border-l bg-card">
+    <aside
+      className="flex w-[460px] shrink-0 flex-col border-l bg-card"
+      data-menu="reference-panel"
+    >
       <div className="flex items-center gap-2 border-b px-4 py-2.5">
         <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{r.title || r.url}</h2>
         <Button variant="ghost" size="icon-xs" onClick={onClose} aria-label="Закрыть">
@@ -213,9 +280,20 @@ function ReferencePanel({
               <Sparkles className="size-3.5 text-brand" /> Разбор формата
             </h3>
             <p className="mb-2 text-xs text-muted-foreground">
-              Попроси Клода: «разбери референс {r.id}» — он посмотрит кадры и запишет разбор сюда.
-              Или пиши сам.
+              {r.analysis
+                ? 'Разбор есть. Скопируй промпт — Claude или GPT с подключённым Shotbeam соберут из него формат.'
+                : 'Скопируй промпт и вставь в Claude или GPT с подключённым Shotbeam: он посмотрит кадры и запишет разбор сюда. Или пиши сам.'}
             </p>
+            <div className="mb-2 flex flex-wrap gap-2">
+              <Button size="sm" variant="secondary" onClick={() => void copyReferencePrompt(r)}>
+                <Bot />
+                {r.analysis ? 'Промпт: сделать формат' : 'Копировать промпт'}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => void copyReferenceId(r)}>
+                <Hash />
+                Id: <span className="font-mono">{r.id}</span>
+              </Button>
+            </div>
             <Textarea
               rows={10}
               value={analysis}
@@ -270,6 +348,29 @@ export function ReferencesPage({ project, id }: { project: Project; id?: string 
     },
     onError: errorToast,
   })
+  usePageMenu(() => [
+    {
+      label: 'Добавить ссылку из буфера',
+      icon: ClipboardPaste,
+      onSelect: () =>
+        void navigator.clipboard
+          .readText()
+          .then((text) => {
+            const link = text.trim()
+            if (!/^https?:\/\//.test(link)) return toast.error('В буфере нет ссылки')
+            api
+              .post<Reference>('/api/references', { url: link, projectId: project.id })
+              .then((r) => navigate({ kind: 'references', id: r.id }))
+              .catch(errorToast)
+          })
+          .catch(() => toast.error('Нет доступа к буферу обмена')),
+    },
+    {
+      label: 'Вставить ссылку…',
+      icon: Link2,
+      onSelect: () => document.getElementById('reference-url')?.focus(),
+    },
+  ])
   return (
     <div className="flex h-full min-h-0">
       <div className="min-w-0 flex-1 overflow-y-auto">
@@ -289,6 +390,7 @@ export function ReferencesPage({ project, id }: { project: Project; id?: string 
             <Input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
+              id="reference-url"
               placeholder="https://www.instagram.com/reel/…"
               className="pl-8"
             />
@@ -316,6 +418,11 @@ export function ReferencesPage({ project, id }: { project: Project; id?: string 
                   selected={r.id === id}
                   onClick={() =>
                     navigate({ kind: 'references', id: r.id === id ? undefined : r.id })
+                  }
+                  onDelete={() =>
+                    void deleteReferenceAsk(r).then(
+                      (ok) => ok && r.id === id && navigate({ kind: 'references' }),
+                    )
                   }
                 />
               </ReferenceMenu>

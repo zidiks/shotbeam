@@ -1,12 +1,51 @@
 import type { Asset, Composition, CompositionOp, Item, Track } from '@shotbeam/core'
-import { compositionDuration, isFree, itemEnd, TRACK_ITEMS, trackLabel } from '@shotbeam/core'
-import { Button, cn, Tooltip, TooltipContent, TooltipTrigger } from '@shotbeam/ui'
-import { Eye, EyeOff, Layers, Magnet, Plus, Volume2, VolumeX, X } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import {
+  compositionDuration,
+  findItem,
+  isFree,
+  itemEnd,
+  TRACK_ITEMS,
+  trackLabel,
+} from '@shotbeam/core'
+import {
+  Button,
+  cn,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@shotbeam/ui'
+import {
+  AlignHorizontalJustifyStart,
+  ClipboardPaste,
+  Eye,
+  EyeOff,
+  Layers,
+  LocateFixed,
+  Magnet,
+  Maximize2,
+  Music2,
+  Plus,
+  Trash2,
+  Type,
+  Volume2,
+  VolumeX,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../../lib/api'
+import { type MenuEntry, useMenuZone } from '../../lib/contextMenu'
 import { timecode } from '../../lib/format'
-import { useEditor } from './state'
+import { comboLabel } from '../../lib/hotkeys'
+import { useEditor, ZOOM_MAX, ZOOM_MIN } from './state'
 import { TimelineItemMenu } from './TimelineItemMenu'
+import { Waveform } from './Waveform'
 
 /*
  * Timeline-lite, laid out like any editor: visual tracks on top (V1 is the main one, higher ones
@@ -17,6 +56,14 @@ import { TimelineItemMenu } from './TimelineItemMenu'
  * neighbours instead of covering them. Pushing on past the edge (BREAK_PX) breaks through and
  * places it over the neighbour on purpose. With the magnet off, or while Alt is held, items go
  * exactly where they are dropped and may overlap. Every gesture ends in one batch of ops.
+ *
+ * The beats of the music on the audio tracks show on the ruler and are snap points too; «В бит»
+ * re-times the shots of a track so every cut lands on one.
+ *
+ * Moving around: the wheel scrolls in time, Shift+wheel through the tracks, Ctrl/Cmd+wheel (and
+ * a trackpad pinch, which arrives as Ctrl+wheel) zooms around the pointer, the middle button
+ * drags the view. Other zoom changes keep the playhead in place; the view follows the playhead
+ * when it leaves the screen.
  */
 
 const HEADER = 132
@@ -24,6 +71,23 @@ const ROW = 46
 const SNAP_PX = 8
 /** How far past a neighbour's edge an item has to be pushed before it may cover it. */
 const BREAK_PX = 48
+/** Zoom per pixel of wheel: one mouse notch (100 px) is about x1.2. */
+const WHEEL_ZOOM = 0.002
+
+/** The zoom slider is logarithmic, 0..1000 over ZOOM_MIN..ZOOM_MAX. */
+const toSlider = (z: number) =>
+  Math.round((1000 * Math.log(z / ZOOM_MIN)) / Math.log(ZOOM_MAX / ZOOM_MIN))
+const fromSlider = (v: number) => ZOOM_MIN * (ZOOM_MAX / ZOOM_MIN) ** (v / 1000)
+
+/** Beat marks closer than this on screen are not drawn (they still snap). */
+const BEAT_PX = 6
+
+const BEAT_STEPS = [
+  { every: 1, label: 'Каждый бит' },
+  { every: 2, label: 'Через бит' },
+  { every: 4, label: 'Каждый такт (4 бита)' },
+  { every: 8, label: 'Каждые 2 такта' },
+]
 
 type DragMode = 'move' | 'trim-start' | 'trim-end'
 
@@ -149,10 +213,13 @@ function place(
 export function Timeline({
   composition,
   assets,
+  beats,
   apply,
 }: {
   composition: Composition
   assets: Map<string, Asset>
+  /** Beat times of the music, timeline time. */
+  beats: number[]
   apply: (ops: CompositionOp[]) => void
 }) {
   const { time, zoom, selected, setTime, select, setZoom } = useEditor()
@@ -162,17 +229,132 @@ export function Timeline({
   const lanes = useRef<HTMLDivElement>(null)
   const duration = compositionDuration(composition)
   const width = Math.max(duration + 10, 30) * zoom
+  const fitTick = useEditor((s) => s.fitTick)
+  const playing = useEditor((s) => s.playing)
+  const dragging = useRef(false)
+  dragging.current = !!drag
+
+  // After a zoom change, scroll so the anchor (the pointer, else the playhead, else the left
+  // edge) stays where it was on screen. Runs before paint, so nothing jumps.
+  const shownZoom = useRef(zoom)
+  useLayoutEffect(() => {
+    const el = lanes.current
+    const old = shownZoom.current
+    shownZoom.current = zoom
+    if (!el || old === zoom) return
+    const s = useEditor.getState()
+    let anchor = s.zoomAnchor
+    if (!anchor) {
+      const x = s.time * old - el.scrollLeft
+      anchor =
+        x >= 0 && x <= el.clientWidth - HEADER
+          ? { time: s.time, x }
+          : { time: el.scrollLeft / old, x: 0 }
+    }
+    el.scrollLeft = Math.max(0, anchor.time * zoom - anchor.x)
+  }, [zoom])
+
+  // Fit the whole video in view (Shift+Z, the button). Only a new request fits, not an edit.
+  const durationRef = useRef(duration)
+  durationRef.current = duration
+  const firstFit = useRef(fitTick)
+  useEffect(() => {
+    if (fitTick === firstFit.current) return
+    const el = lanes.current
+    if (!el) return
+    const visible = el.clientWidth - HEADER - 24
+    useEditor.getState().setZoom(visible / Math.max(1, durationRef.current), { time: 0, x: 0 })
+    el.scrollLeft = 0
+  }, [fitTick])
+
+  // Keep the playhead on screen: when it leaves the view (playing, arrow keys, End), turn the
+  // page. Scrolling away while it stands still is left alone.
+  // Zoom keeps the playhead by itself (above); only a moving playhead pages.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: zoom changes must not page
+  useEffect(() => {
+    const el = lanes.current
+    if (!el || dragging.current) return
+    const view = el.clientWidth - HEADER
+    const x = time * zoom - el.scrollLeft
+    if (x >= 0 && x <= view - 8) return
+    el.scrollLeft = Math.max(0, time * zoom - (playing ? view * 0.1 : view / 2))
+  }, [time, playing])
+
+  // The wheel, listened to directly: React wheel handlers are passive and cannot stop the
+  // browser from scrolling its own way.
+  useEffect(() => {
+    const el = lanes.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1
+      const dx = e.deltaX * unit
+      const dy = e.deltaY * unit
+      e.preventDefault()
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        const s = useEditor.getState()
+        const x = Math.max(0, e.clientX - el.getBoundingClientRect().left - HEADER)
+        // Several wheel events can arrive before the next render: read time with the zoom that
+        // the scroll position belongs to, not the one already asked for.
+        const t = (el.scrollLeft + x) / shownZoom.current
+        s.setZoom(s.zoom * Math.exp(-(dy || dx) * WHEEL_ZOOM), { time: t, x })
+        return
+      }
+      // Windows turns Shift+wheel into a sideways delta; either way it means the tracks.
+      if (e.shiftKey) {
+        el.scrollTop += dy || dx
+        return
+      }
+      // A trackpad swipe sideways stays sideways; the wheel moves through time.
+      el.scrollLeft += Math.abs(dx) > Math.abs(dy) ? dx : dy
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  // Middle button: drag the view in both directions.
+  const onPanStart = (e: React.PointerEvent) => {
+    if (e.button !== 1) return
+    const el = lanes.current
+    if (!el) return
+    e.preventDefault()
+    e.stopPropagation()
+    const x0 = e.clientX
+    const y0 = e.clientY
+    const left = el.scrollLeft
+    const top = el.scrollTop
+    el.style.cursor = 'grabbing'
+    const move = (ev: PointerEvent) => {
+      el.scrollLeft = left - (ev.clientX - x0)
+      el.scrollTop = top - (ev.clientY - y0)
+    }
+    const up = () => {
+      el.style.cursor = ''
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
 
   const maxOut = (id: string) => assets.get(id)?.duration ?? Number.POSITIVE_INFINITY
   const trackOf = (id: string) => composition.tracks.find((t) => t.id === id) as Track
 
-  // Edges to snap to: zero, the playhead, every other item's start and end on any track.
+  // Edges to snap to: zero, the playhead, every other item's start and end on any track, beats.
   const snaps = useMemo(() => {
-    const s = [0, time]
+    const s = [0, time, ...beats]
     for (const t of composition.tracks)
       for (const i of t.items) if (i.id !== drag?.id) s.push(i.start, itemEnd(i))
     return s
-  }, [composition, time, drag?.id])
+  }, [composition, time, drag?.id, beats])
+
+  // The track to cut to the beat: the selected item's visual track, else the main one (V1).
+  const beatTrack = useMemo(() => {
+    const own = selected ? findItem(composition, selected)?.track : undefined
+    if (own?.kind === 'visual') return own
+    return composition.tracks.filter((t) => t.kind === 'visual').at(-1)
+  }, [composition, selected])
+  const beatGap =
+    beats.length > 1 ? ((beats.at(-1) as number) - (beats[0] as number)) / (beats.length - 1) : 0
 
   const snap = (d: Drag, rawDx: number) => {
     const seconds = rawDx / zoom
@@ -287,8 +469,167 @@ export function Timeline({
 
   const removeTrack = (t: Track) => apply([{ op: 'removeTrack', trackId: t.id }])
 
+  // Right-click menus of the timeline's empty places (items have their own, TimelineItemMenu).
+  const trackById = (id: string | null) => composition.tracks.find((t) => t.id === id)
+  const viewEntries = (): MenuEntry[] => {
+    const s = useEditor.getState()
+    return [
+      {
+        label: 'Вписать ролик',
+        icon: Maximize2,
+        shortcut: comboLabel({ code: 'KeyZ', shift: true }),
+        onSelect: s.fitView,
+      },
+      {
+        label: 'Приблизить',
+        icon: ZoomIn,
+        shortcut: comboLabel({ code: 'Equal' }),
+        onSelect: () => s.setZoom(s.zoom * 1.25),
+      },
+      {
+        label: 'Отдалить',
+        icon: ZoomOut,
+        shortcut: comboLabel({ code: 'Minus' }),
+        onSelect: () => s.setZoom(s.zoom / 1.25),
+      },
+      {
+        label: s.magnet ? 'Магнит: выключить (наложение)' : 'Магнит: включить',
+        icon: s.magnet ? Layers : Magnet,
+        shortcut: comboLabel({ code: 'KeyM' }),
+        onSelect: () => s.setMagnet(!s.magnet),
+      },
+    ]
+  }
+  const newTracks: MenuEntry[] = [
+    {
+      label: 'Новая видео-дорожка',
+      icon: Plus,
+      onSelect: () => apply([{ op: 'addTrack', kind: 'visual' }]),
+    },
+    {
+      label: 'Новая аудио-дорожка',
+      icon: Plus,
+      onSelect: () => apply([{ op: 'addTrack', kind: 'audio' }]),
+    },
+  ]
+  const trackEntries = (t: Track): MenuEntry[] => [
+    {
+      label: 'Закрыть пробелы',
+      icon: AlignHorizontalJustifyStart,
+      disabled: !t.items.length,
+      onSelect: () => apply([{ op: 'closeGaps', trackId: t.id }]),
+    },
+    ...(t.kind === 'visual'
+      ? BEAT_STEPS.slice(0, 3).map(
+          (s): MenuEntry => ({
+            label: `Склейки в бит: ${s.label.toLowerCase()}`,
+            icon: Music2,
+            shortcut: s.every === 1 ? comboLabel({ code: 'KeyB', shift: true }) : undefined,
+            disabled: !beats.length || !t.items.length,
+            onSelect: () => apply([{ op: 'cutToBeats', trackId: t.id, every: s.every }]),
+          }),
+        )
+      : []),
+    'separator',
+    {
+      label: t.muted ? 'Включить звук' : 'Выключить звук',
+      icon: t.muted ? Volume2 : VolumeX,
+      onSelect: () => apply([{ op: 'track', trackId: t.id, patch: { muted: !t.muted } }]),
+    },
+    ...(t.kind === 'visual'
+      ? [
+          {
+            label: t.hidden ? 'Показать дорожку' : 'Скрыть дорожку',
+            icon: t.hidden ? Eye : EyeOff,
+            onSelect: () => apply([{ op: 'track', trackId: t.id, patch: { hidden: !t.hidden } }]),
+          },
+        ]
+      : []),
+    'separator',
+    ...newTracks,
+    {
+      label: t.items.length ? `Удалить дорожку (${t.items.length} эл.)` : 'Удалить дорожку',
+      icon: Trash2,
+      destructive: true,
+      onSelect: () => {
+        if (
+          t.items.length &&
+          !confirm(`Удалить дорожку ${trackLabel(composition, t.id)} вместе с её элементами?`)
+        )
+          return
+        removeTrack(t)
+      },
+    },
+  ]
+  useMenuZone('track-head', ({ zone }) => {
+    const t = trackById(zone.getAttribute('data-track-id'))
+    return t ? [{ heading: `Дорожка ${trackLabel(composition, t.id)}` }, ...trackEntries(t)] : []
+  })
+  useMenuZone('lane', ({ zone, x }) => {
+    const t = trackById(zone.getAttribute('data-track-id'))
+    if (!t) return []
+    const at = xToTime(x)
+    const clip = useEditor.getState().clipboard
+    const fits = clip && TRACK_ITEMS[t.kind].includes(clip.type)
+    return [
+      { heading: `${trackLabel(composition, t.id)} · ${timecode(at)}` },
+      { label: 'Плейхед сюда', icon: LocateFixed, onSelect: () => setTime(at) },
+      {
+        label: fits ? 'Вставить сюда' : 'Вставить сюда (буфер пуст)',
+        icon: ClipboardPaste,
+        shortcut: comboLabel({ code: 'KeyV', mod: true }),
+        disabled: !fits,
+        onSelect: () => {
+          if (!clip) return
+          const { id: _drop, ...copy } = clip
+          apply([{ op: 'add', trackId: t.id, item: { ...copy, start: at } }])
+        },
+      },
+      ...(t.kind === 'visual'
+        ? [
+            {
+              label: 'Текст здесь',
+              icon: Type,
+              shortcut: comboLabel({ code: 'KeyT' }),
+              onSelect: () =>
+                apply([
+                  {
+                    op: 'add',
+                    trackId: t.id,
+                    item: {
+                      type: 'text',
+                      start: at,
+                      duration: 2.5,
+                      text: 'Текст',
+                      style: { y: 0.2 },
+                      fadeIn: 0.15,
+                      fadeOut: 0.15,
+                    },
+                  },
+                ]),
+            },
+          ]
+        : []),
+      'separator',
+      ...trackEntries(t),
+      'separator',
+      ...viewEntries(),
+    ]
+  })
+  useMenuZone('ruler', ({ x }) => {
+    const at = xToTime(x)
+    return [
+      { heading: timecode(at) },
+      { label: 'Плейхед сюда', icon: LocateFixed, onSelect: () => setTime(at) },
+      'separator',
+      ...viewEntries(),
+    ]
+  })
+  useMenuZone('timeline', () => [...newTracks, 'separator', ...viewEntries()])
+
   const ticks: number[] = []
-  const step = zoom > 120 ? 0.5 : zoom > 50 ? 1 : zoom > 20 ? 5 : 10
+  const step =
+    zoom > 300 ? 0.1 : zoom > 120 ? 0.5 : zoom > 50 ? 1 : zoom > 20 ? 5 : zoom > 8 ? 10 : 30
   for (let s = 0; s * zoom < width; s += step) ticks.push(s)
 
   const label = (i: Item) => {
@@ -309,8 +650,11 @@ export function Timeline({
   const firstAudio = composition.tracks.findIndex((t) => t.kind === 'audio')
 
   return (
-    <div className="flex h-full min-h-0 flex-col border-t bg-card">
-      <div className="flex items-center gap-2 border-b px-3 py-1.5 text-xs text-muted-foreground">
+    <div className="flex h-full min-h-0 flex-col bg-card">
+      <div
+        className="flex items-center gap-2 border-b px-3 py-1.5 text-xs text-muted-foreground"
+        data-menu="timeline"
+      >
         <span className="font-mono tabular-nums text-foreground">
           {timecode(time)} / {timecode(duration)}
         </span>
@@ -354,26 +698,91 @@ export function Timeline({
               : 'Свободный режим: элементы кладутся куда отпустил и могут перекрываться.'}
           </TooltipContent>
         </Tooltip>
-        <span className="ml-auto">Масштаб</span>
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 gap-1 px-2 text-xs"
+                  disabled={!beats.length || !beatTrack?.items.length}
+                >
+                  <Music2 className="size-3.5" />В бит
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-72">
+              {beats.length
+                ? 'Переставить склейки дорожки на биты музыки, сохраняя темп нарезки. Shift+B — на каждый бит.'
+                : 'Положите на аудио-дорожку музыку с посчитанными битами.'}
+            </TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="start">
+            <DropdownMenuLabel>
+              Склейки {beatTrack ? trackLabel(composition, beatTrack.id) : ''} на биты
+            </DropdownMenuLabel>
+            {BEAT_STEPS.map((s) => (
+              <DropdownMenuItem
+                key={s.every}
+                onSelect={() =>
+                  beatTrack && apply([{ op: 'cutToBeats', trackId: beatTrack.id, every: s.every }])
+                }
+              >
+                {s.label}
+                {beatGap ? (
+                  <span className="ml-auto pl-4 text-muted-foreground tabular-nums">
+                    {(beatGap * s.every).toFixed(2)} с
+                  </span>
+                ) : null}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto h-7 gap-1 px-2 text-xs"
+              onClick={() => useEditor.getState().fitView()}
+            >
+              <Maximize2 className="size-3.5" />
+              Вписать
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-72">
+            Весь ролик в ширину таймлайна (Shift+Z). Колёсико — по времени, Shift+колёсико — по
+            дорожкам, Ctrl+колёсико — масштаб у курсора, средняя кнопка — тащить.
+          </TooltipContent>
+        </Tooltip>
         <input
           type="range"
-          min="10"
-          max="300"
-          value={zoom}
-          onChange={(e) => setZoom(Number(e.target.value))}
+          min="0"
+          max="1000"
+          value={toSlider(zoom)}
+          onChange={(e) => setZoom(fromSlider(Number(e.target.value)))}
+          aria-label="Масштаб таймлайна"
           className="w-32 accent-[var(--color-brand)]"
         />
       </div>
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: the scroll area takes pointer gestures */}
       <div
         ref={lanes}
         className="relative min-h-0 flex-1 overflow-auto"
         onPointerMove={onMove}
         onPointerUp={onUp}
+        onPointerDownCapture={onPanStart}
+        // No autoscroll circle on a middle click (Windows).
+        onMouseDown={(e) => {
+          if (e.button === 1) e.preventDefault()
+        }}
       >
         <div style={{ width: width + HEADER }} className="relative">
           {/* Ruler */}
           <div
             className="sticky top-0 z-20 flex h-6 border-b bg-card"
+            data-menu="ruler"
             onPointerDown={(e) => {
               setTime(xToTime(e.clientX))
               const move = (ev: PointerEvent) => setTime(xToTime(ev.clientX))
@@ -399,6 +808,15 @@ export function Timeline({
                   {Number.isInteger(s) ? timecode(s, true) : ''}
                 </span>
               ))}
+              {beatGap * zoom >= BEAT_PX
+                ? beats.map((b) => (
+                    <span
+                      key={b}
+                      className="pointer-events-none absolute bottom-0 h-1.5 w-px bg-violet-500"
+                      style={{ left: b * zoom }}
+                    />
+                  ))
+                : null}
             </div>
           </div>
 
@@ -411,9 +829,12 @@ export function Timeline({
               )}
               style={{ height: ROW }}
               data-track-id={track.id}
+              data-menu="lane"
             >
               <div
                 className="sticky left-0 z-10 flex shrink-0 items-center gap-0.5 border-r bg-card px-2"
+                data-menu="track-head"
+                data-track-id={track.id}
                 style={{ width: HEADER }}
               >
                 <span
@@ -529,8 +950,11 @@ export function Timeline({
                             className="absolute inset-y-0 left-0 w-2 cursor-ew-resize hover:bg-white/30"
                             onPointerDown={(e) => onItemDown(e, 'trim-start', i, t)}
                           />
-                          {covers ? <Layers className="ml-2 size-3 shrink-0" /> : null}
-                          <span className="truncate px-2.5">{label(i)}</span>
+                          {shown.type === 'audio' ? <Waveform item={shown} zoom={zoom} /> : null}
+                          {covers ? <Layers className="relative ml-2 size-3 shrink-0" /> : null}
+                          <span className="relative truncate px-2.5 drop-shadow-sm">
+                            {label(i)}
+                          </span>
                           <span
                             className="absolute inset-y-0 right-0 w-2 cursor-ew-resize hover:bg-white/30"
                             onPointerDown={(e) => onItemDown(e, 'trim-end', i, t)}
