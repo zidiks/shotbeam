@@ -8,8 +8,15 @@ import { type RunOptions, run } from './run'
  * Filter expressions are passed as single arguments, never through a shell.
  */
 
-export const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg'
-export const FFPROBE = process.env.FFPROBE_PATH || 'ffprobe'
+export let FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg'
+export let FFPROBE = process.env.FFPROBE_PATH || 'ffprobe'
+
+/** Uses the ffmpeg and ffprobe in `dir` (a build the engine downloaded, see tools.ts). */
+export function setFfmpegDir(dir: string) {
+  const ext = process.platform === 'win32' ? '.exe' : ''
+  FFMPEG = join(dir, `ffmpeg${ext}`)
+  FFPROBE = join(dir, `ffprobe${ext}`)
+}
 
 export interface Probe {
   duration: number | null

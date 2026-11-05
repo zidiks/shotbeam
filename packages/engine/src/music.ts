@@ -94,7 +94,14 @@ async function openverse<T>(path: string, signal?: AbortSignal): Promise<T> {
     throw Object.assign(new Error('Openverse: слишком много запросов, попробуй через минуту'), {
       status: 429,
     })
-  if (!res.ok) throw new Error(`Openverse ответил ${res.status}`)
+  if (!res.ok) {
+    // Openverse says why in `detail` (e.g. a limit for requests without a key).
+    const detail = await res
+      .json()
+      .then((b) => (b as { detail?: string }).detail)
+      .catch(() => undefined)
+    throw new Error(`Openverse ответил ${res.status}${detail ? `: ${detail}` : ''}`)
+  }
   return (await res.json()) as T
 }
 
@@ -131,7 +138,8 @@ export class Music {
       length: 'short,medium',
       license: LICENSES[opts.license ?? 'credit'],
       page: String(opts.page ?? 1),
-      page_size: String(Math.min(50, opts.pageSize ?? 20)),
+      // Requests without an API key get at most 20 per page (more is a 401).
+      page_size: String(Math.min(20, opts.pageSize ?? 20)),
     })
     const r = await openverse<{ result_count: number; page_count: number; results: RawTrack[] }>(
       `?${params}`,

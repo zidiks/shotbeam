@@ -147,6 +147,7 @@ export const useSettings = () =>
 export interface SetupStatus {
   library: string
   mcpEntry: string
+  mcpCommand: string
   python: { ready: boolean; features: Record<string, boolean> | null }
   voices: ProviderStatus[]
   motion: Record<'hyperframes' | 'remotion', { ready: boolean; detail: string }>

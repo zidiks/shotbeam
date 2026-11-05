@@ -2,15 +2,27 @@ import { Unplug } from 'lucide-react'
 import { ENGINE_URL } from '../lib/api'
 import { Empty } from './common'
 
-/** The engine does not answer: say how to start it. */
+// A production build runs inside the installed app, which starts the engine itself.
+const INSTALLED = import.meta.env.PROD
+
+/** The engine does not answer: say how to start it, or where to look when it would not start. */
 export function EngineOffline() {
   return (
     <Empty icon={Unplug} title="Движок Shotbeam не запущен">
-      <p>
-        Интерфейс ищет его на <code className="font-mono text-xs">{ENGINE_URL}</code>. Запусти{' '}
-        <code className="font-mono text-xs">pnpm dev:engine</code> в папке проекта (десктопная
-        версия запускает его сама). Как только он ответит, всё подтянется.
-      </p>
+      {INSTALLED ? (
+        <p>
+          Приложение запускает его само; обычно это пара секунд. Если не поднимается — почему,
+          написано в <code className="font-mono text-xs">logs\engine.log</code> в папке библиотеки
+          (по умолчанию <code className="font-mono text-xs">%USERPROFILE%\Shotbeam</code>).
+          Перезапусти приложение.
+        </p>
+      ) : (
+        <p>
+          Интерфейс ищет его на <code className="font-mono text-xs">{ENGINE_URL}</code>. Запусти{' '}
+          <code className="font-mono text-xs">pnpm dev:engine</code> в папке проекта (десктопная
+          версия запускает его сама). Как только он ответит, всё подтянется.
+        </p>
+      )}
     </Empty>
   )
 }

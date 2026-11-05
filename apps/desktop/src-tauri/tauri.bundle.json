@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "pnpm --filter @shotbeam/web build && node scripts/bundle.mjs"
+  },
+  "bundle": {
+    "targets": ["nsis"],
+    "resources": {
+      "resources/": ""
+    }
+  }
+}

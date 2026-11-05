@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build": "tauri build --config src-tauri/tauri.bundle.json"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/cli": "^2",
+    "esbuild": "0.28.2"
   }
 }

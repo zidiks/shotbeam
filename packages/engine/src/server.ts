@@ -30,10 +30,15 @@ import { assetUsage, deleteAsset, deleteReference, deleteVoice } from './removal
  * editor can seek; /api/events streams changes (SSE).
  */
 
-/** The MCP server's entry script in this checkout, for the "connect Claude" command. */
-const MCP_ENTRY = fileURLToPath(
-  new URL('../../../apps/mcp/bin/shotbeam-mcp.mjs', import.meta.url),
+/**
+ * How MCP clients start the server, for "connect Claude": the installed app passes its own Node
+ * and bundled server (SHOTBEAM_NODE / SHOTBEAM_MCP_ENTRY); a checkout uses node on PATH.
+ */
+const MCP_ENTRY = (
+  process.env.SHOTBEAM_MCP_ENTRY ??
+  fileURLToPath(new URL('../../../apps/mcp/bin/shotbeam-mcp.mjs', import.meta.url))
 ).replace(/\\/g, '/')
+const MCP_COMMAND = (process.env.SHOTBEAM_NODE ?? 'node').replace(/\\/g, '/')
 
 const ALLOWED_ORIGINS = [
   /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/,
@@ -120,10 +125,12 @@ export function createApp(engine: Engine) {
     c.json({
       library: engine.library.root,
       mcpEntry: MCP_ENTRY,
+      mcpCommand: MCP_COMMAND,
       python: { ready: python.ready, features: await python.features().catch(() => null) },
       voices: await voices.statuses(),
       motion: await motion.status(),
       upscaler: engine.upscaler.status(),
+      tools: engine.tools.status(),
     }),
   )
 
@@ -172,6 +179,7 @@ export function createApp(engine: Engine) {
     return c.json(engine.music.generate(input))
   })
 
+  app.post('/api/setup/ffmpeg', (c) => c.json(engine.tools.download().job))
   app.post('/api/setup/upscaler', (c) => c.json(engine.upscaler.install()))
 
   // Settings

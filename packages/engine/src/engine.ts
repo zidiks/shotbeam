@@ -13,6 +13,7 @@ import { References } from './references'
 import { Fonts } from './render/fonts'
 import { Sources } from './sources'
 import { Store } from './store'
+import { Tools } from './tools'
 import { Voices } from './voice/voices'
 
 /** Everything the engine is made of, wired once. */
@@ -30,12 +31,14 @@ export class Engine {
   readonly motion: Motion
   readonly upscaler: Upscaler
   readonly music: Music
+  readonly tools: Tools
 
   constructor(readonly library = new Library()) {
     const db = openDatabase(library.database)
     this.store = new Store(db, this.bus)
     this.store.failInterruptedJobs()
     this.jobs = new JobQueue(this.store, this.bus)
+    this.tools = new Tools(library, this.jobs)
     this.python = new Python(library)
     this.indexer = new Indexer(library, this.store, this.jobs, this.python)
     this.sources = new Sources(this.store, this.indexer)
@@ -72,7 +75,15 @@ export class Engine {
     })
   }
 
+  /** Starts watching folders and finishes indexing left over, once ffmpeg is there. */
   start() {
+    this.tools
+      .ensureFfmpeg()
+      .catch((err) => console.error(`ffmpeg is not available: ${err}`))
+      .finally(() => this.resume())
+  }
+
+  private resume() {
     this.sources.watchAll()
     // Assets left half-done by a previous run.
     for (const a of this.store.listAssets({ status: 'indexing', limit: 10_000 }).items)

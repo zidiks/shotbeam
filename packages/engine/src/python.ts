@@ -98,7 +98,7 @@ export class Python {
   }
 
   /** A base interpreter (3.10–3.12) to make the virtualenv from. */
-  private async basePython(): Promise<[string, string[]]> {
+  private async basePython(signal?: AbortSignal): Promise<[string, string[]]> {
     const tries: [string, string[]][] = process.env.SHOTBEAM_PYTHON
       ? [[process.env.SHOTBEAM_PYTHON, []]]
       : process.platform === 'win32'
@@ -127,9 +127,45 @@ export class Python {
         if (major === 3 && (minor ?? 0) >= 10 && (minor ?? 0) <= 12) return [cmd, args]
       } catch {}
     }
-    throw new Error(
-      'Python 3.10–3.12 is needed for local models. Install it from python.org and retry.',
+    // None on this computer: a standalone CPython in the library, so the app needs no setup.
+    return [await this.standalonePython(signal), []]
+  }
+
+  /** Where a downloaded standalone Python lives (python-build-standalone, "install_only"). */
+  private get standaloneExe() {
+    const base = join(this.library.pythonDir, 'base', 'python')
+    return process.platform === 'win32' ? join(base, 'python.exe') : join(base, 'bin', 'python3')
+  }
+
+  private async standalonePython(signal?: AbortSignal): Promise<string> {
+    if (existsSync(this.standaloneExe)) return this.standaloneExe
+    const triple =
+      process.platform === 'win32'
+        ? 'x86_64-pc-windows-msvc'
+        : process.platform === 'darwin'
+          ? `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-apple-darwin`
+          : `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-unknown-linux-gnu`
+    const res = await fetch(
+      'https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest',
+      { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Shotbeam' }, signal },
     )
+    if (!res.ok) throw new Error(`Python 3.10–3.12 not found, and GitHub said ${res.status}`)
+    const release = (await res.json()) as {
+      assets: { name: string; browser_download_url: string }[]
+    }
+    const asset = release.assets.find(
+      (a) => a.name.startsWith('cpython-3.12.') && a.name.endsWith(`${triple}-install_only.tar.gz`),
+    )
+    if (!asset) throw new Error(`No standalone Python 3.12 for ${triple}`)
+    const dir = join(this.library.pythonDir, 'base')
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+    const archive = join(dir, asset.name)
+    await download(asset.browser_download_url, archive, signal)
+    await run('tar', ['-xzf', archive, '-C', dir], { signal })
+    rmSync(archive, { force: true })
+    if (!existsSync(this.standaloneExe)) throw new Error('Standalone Python unpacked incomplete')
+    return this.standaloneExe
   }
 
   /** pip's downloads and builds stay in the library too (the system drive may be small). */
@@ -153,7 +189,8 @@ export class Python {
     const env = this.installEnv()
     if (!this.ready) {
       progress(0.02, 'Creating the Python environment')
-      const [cmd, args] = await this.basePython()
+      progress(0.02, 'Finding Python (downloading one if there is none)')
+      const [cmd, args] = await this.basePython(signal)
       await run(cmd, [...args, '-m', 'venv', this.venv], { signal, env })
       await run(this.python, ['-m', 'pip', 'install', '--upgrade', 'pip', 'wheel'], { signal, env })
     }

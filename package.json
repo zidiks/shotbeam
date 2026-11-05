@@ -16,7 +16,8 @@
     "test": "turbo run test",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "check": "pnpm lint && pnpm typecheck && pnpm test"
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "build:desktop": "pnpm --filter @shotbeam/desktop build"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

@@ -23,6 +23,9 @@ importers:
       '@tauri-apps/cli':
         specifier: ^2
         version: 2.12.4
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
 
   apps/mcp:
     dependencies:

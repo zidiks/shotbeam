@@ -37,7 +37,7 @@ function Openverse() {
   const search = useMutation({
     mutationFn: () =>
       api.get<{ total: number; results: Track[] }>(
-        `/api/music/openverse?q=${encodeURIComponent(q.trim())}&license=${shareAlike ? 'share-alike' : 'credit'}&pageSize=30`,
+        `/api/music/openverse?q=${encodeURIComponent(q.trim())}&license=${shareAlike ? 'share-alike' : 'credit'}&pageSize=20`,
       ),
     onError: errorToast,
   })

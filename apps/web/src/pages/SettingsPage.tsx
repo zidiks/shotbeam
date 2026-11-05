@@ -35,10 +35,10 @@ const FEATURES: { id: string; label: string; hint: string }[] = [
   },
 ]
 
-function McpHelp({ library, entry }: { library: string; entry: string }) {
+function McpHelp({ library, entry, command }: { library: string; entry: string; command: string }) {
   const [connecting, setConnecting] = useState<string | null>(null)
   const [installedPath, setInstalledPath] = useState('')
-  const cmd = `claude mcp add --scope user shotbeam -- node "${entry}"`
+  const cmd = `claude mcp add --scope user shotbeam -- "${command}" "${entry}"`
   const connect = async (client: string) => {
     setConnecting(client)
     try {
@@ -57,7 +57,7 @@ function McpHelp({ library, entry }: { library: string; entry: string }) {
         JSON.stringify(
           {
             mcpServers: {
-              shotbeam: { command: 'node', args: [entry], env: { SHOTBEAM_HOME: library } },
+              shotbeam: { command, args: [entry], env: { SHOTBEAM_HOME: library } },
             },
           },
           null,
@@ -173,7 +173,9 @@ export function SettingsPage() {
           />
         </Section>
 
-        {setup ? <McpHelp library={setup.library} entry={setup.mcpEntry} /> : null}
+        {setup ? (
+          <McpHelp library={setup.library} entry={setup.mcpEntry} command={setup.mcpCommand} />
+        ) : null}
 
         <Section
           title="Голос"
