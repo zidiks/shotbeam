@@ -1,0 +1,5 @@
+# LF everywhere, whatever core.autocrlf says: Biome checks line endings.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.icns binary
