@@ -150,6 +150,18 @@ export function createApp(engine: Engine) {
   })
 
   app.post('/api/setup/remotion', (c) => c.json(motion.setupRemotion().job))
+  app.get('/api/motion/blocks', async (c) => {
+    const q = c.req.query()
+    return c.json(
+      await motion.searchBlocks(q.q ?? '', {
+        type: q.type === 'block' || q.type === 'component' ? q.type : undefined,
+        tag: q.tag || undefined,
+      }),
+    )
+  })
+  app.get('/api/motion/blocks/:name', async (c) =>
+    c.json(await motion.getBlock(c.req.param('name'))),
+  )
   // Music from outside: Openverse search and import, MusicGen.
   app.get('/api/music/openverse', async (c) => {
     const q = c.req.query()
@@ -157,14 +169,21 @@ export function createApp(engine: Engine) {
     return c.json(
       await engine.music.search(q.q, {
         license: q.license === 'share-alike' ? 'share-alike' : 'credit',
+        kind: q.kind === 'sfx' ? 'sfx' : 'music',
         page: q.page ? Number(q.page) : undefined,
         pageSize: q.pageSize ? Number(q.pageSize) : undefined,
       }),
     )
   })
   app.post('/api/music/openverse/:id/import', async (c) => {
-    const { projectId } = await body(c, z.object({ projectId: z.string().nullable().optional() }))
-    return c.json(engine.music.importOpenverse(c.req.param('id'), projectId ?? null))
+    const { projectId, role } = await body(
+      c,
+      z.object({
+        projectId: z.string().nullable().optional(),
+        role: z.enum(['music', 'sfx']).optional(),
+      }),
+    )
+    return c.json(engine.music.importOpenverse(c.req.param('id'), projectId ?? null, role))
   })
   app.post('/api/music/generate', async (c) => {
     const input = await body(
@@ -596,6 +615,9 @@ export function createApp(engine: Engine) {
     return c.json(compositions.apply(c.req.param('id'), input.ops, input.version))
   })
   app.get('/api/compositions/:id/beats', (c) => c.json(compositions.beats(c.req.param('id'))))
+  app.get('/api/compositions/:id/review', async (c) =>
+    c.json(await compositions.review(c.req.param('id'))),
+  )
   app.post('/api/compositions/:id/captions', async (c) => {
     const input = await body(
       c,

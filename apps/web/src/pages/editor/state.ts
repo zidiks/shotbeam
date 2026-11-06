@@ -20,6 +20,8 @@ interface EditorState {
   zoomAnchor: { time: number; x: number } | null
   /** Bumped to ask the timeline to fit the whole video in view. */
   fitTick: number
+  /** Shade where the platforms draw their UI over a vertical video. */
+  safeZones: boolean
   /** Edges stick and items do not cover each other unless pushed through (see Timeline). */
   magnet: boolean
   /** An item copied with Ctrl+C, pasted at the playhead. */
@@ -29,6 +31,7 @@ interface EditorState {
   select: (id: string | null) => void
   setZoom: (z: number, anchor?: { time: number; x: number }) => void
   fitView: () => void
+  setSafeZones: (on: boolean) => void
   setMagnet: (m: boolean) => void
   copy: (item: Item | null) => void
 }
@@ -36,6 +39,15 @@ interface EditorState {
 /** Pixels per second: a long video whole, down to single frames. */
 export const ZOOM_MIN = 5
 export const ZOOM_MAX = 600
+
+function loadFlag(key: string, fallback: boolean) {
+  try {
+    const v = localStorage.getItem(key)
+    return v === null ? fallback : v === '1'
+  } catch {
+    return fallback
+  }
+}
 
 function loadMagnet() {
   try {
@@ -52,6 +64,7 @@ export const useEditor = create<EditorState>((set) => ({
   zoom: 80,
   zoomAnchor: null,
   fitTick: 0,
+  safeZones: loadFlag('shotbeam.safeZones', false),
   magnet: loadMagnet(),
   clipboard: null,
   setTime: (time) => set({ time: Math.max(0, time) }),
@@ -60,6 +73,12 @@ export const useEditor = create<EditorState>((set) => ({
   setZoom: (zoom, anchor) =>
     set({ zoom: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom)), zoomAnchor: anchor ?? null }),
   fitView: () => set((s) => ({ fitTick: s.fitTick + 1 })),
+  setSafeZones: (safeZones) => {
+    try {
+      localStorage.setItem('shotbeam.safeZones', safeZones ? '1' : '0')
+    } catch {}
+    set({ safeZones })
+  },
   setMagnet: (magnet) => {
     try {
       localStorage.setItem('shotbeam.magnet', magnet ? '1' : '0')

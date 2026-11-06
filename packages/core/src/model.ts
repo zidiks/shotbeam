@@ -238,11 +238,11 @@ export const FormatRecipe = z.object({
   captions: z
     .object({
       style: z.string().default('bold-pop'),
-      position: z.number().default(0.72),
+      position: z.number().default(0.63),
       uppercase: z.boolean().default(false),
       maxWords: z.number().default(3),
     })
-    .default({ style: 'bold-pop', position: 0.72, uppercase: false, maxWords: 3 }),
+    .default({ style: 'bold-pop', position: 0.63, uppercase: false, maxWords: 3 }),
   music: z
     .object({
       mood: z.string().default(''),

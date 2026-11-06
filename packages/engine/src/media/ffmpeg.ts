@@ -440,3 +440,23 @@ async function runBinary(args: string[], signal?: AbortSignal): Promise<{ stdout
     )
   })
 }
+
+/**
+ * Integrated loudness (LUFS) and true peak (dBTP) of a file's sound, as platforms measure it.
+ * Nulls when there is no sound.
+ */
+export async function measureLoudness(input: string, signal?: AbortSignal) {
+  const { stderr } = await run(
+    FFMPEG,
+    ['-hide_banner', '-nostats', '-i', input, '-vn', '-af', 'ebur128=peak=true', '-f', 'null', '-'],
+    { signal, keep: 200_000 },
+  )
+  // The summary comes last: "I: -14.1 LUFS" and, under "True peak:", "Peak: -1.6 dBFS".
+  const summary = stderr.slice(stderr.lastIndexOf('Summary:'))
+  const num = (re: RegExp) => {
+    const m = re.exec(summary)
+    const v = m ? Number(m[1]) : Number.NaN
+    return Number.isFinite(v) ? v : null
+  }
+  return { loudness: num(/I:\s+(-?[\d.]+) LUFS/), truePeak: num(/Peak:\s+(-?[\d.]+) dBFS/) }
+}

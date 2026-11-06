@@ -129,13 +129,19 @@ export class Music {
 
   async search(
     query: string,
-    opts: { license?: OpenverseLicense; page?: number; pageSize?: number } = {},
+    opts: {
+      license?: OpenverseLicense
+      page?: number
+      pageSize?: number
+      /** Sound effects: Freesound one-shots under 30 s (their `category` is mostly empty). */
+      kind?: 'music' | 'sfx'
+    } = {},
   ) {
     const params = new URLSearchParams({
       q: query,
       // Not category=music: most usable tracks are Freesound loops and pieces, which carry no
       // category; 30 s to 10 min leaves out one-shot sound effects instead.
-      length: 'short,medium',
+      length: opts.kind === 'sfx' ? 'shortest' : 'short,medium',
       license: LICENSES[opts.license ?? 'credit'],
       page: String(opts.page ?? 1),
       // Requests without an API key get at most 20 per page (more is a 401).
@@ -153,7 +159,7 @@ export class Music {
   }
 
   /** Downloads an Openverse track into the shared music library (once). */
-  importOpenverse(id: string, projectId: string | null = null) {
+  importOpenverse(id: string, projectId: string | null = null, role: 'music' | 'sfx' = 'music') {
     const running = this.jobs.active('music-import', id)
     if (running) return running
     return this.jobs.enqueue('music-import', id, 'net', async (ctx) => {
@@ -168,11 +174,20 @@ export class Music {
       if (known) return { assetId: known.id, attribution: t.attribution, existed: true }
       ctx.progress(0.1, `Скачиваю «${t.title}»`)
       await download(t.url, file, ctx.signal)
-      const asset = this.sources.importFile(file, { projectId, role: 'music' })
+      const asset = this.sources.importFile(file, { projectId, role })
       this.store.saveAsset({
         ...this.store.getAsset(asset.id),
         name: `${t.title}${t.creator ? ` — ${t.creator}` : ''}`,
-        tags: [...new Set([...t.genres, ...t.tags, 'openverse', t.license])].slice(0, 16),
+        // Ours first: the slice keeps them however many tags the source has.
+        tags: [
+          ...new Set([
+            ...(role === 'sfx' ? ['sfx'] : []),
+            'openverse',
+            t.license,
+            ...t.genres,
+            ...t.tags,
+          ]),
+        ].slice(0, 16),
         notes: [
           t.license.startsWith('BY')
             ? `Нужна атрибуция в описании ролика: ${t.attribution}`

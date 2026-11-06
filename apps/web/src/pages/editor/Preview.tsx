@@ -6,7 +6,7 @@ import type {
   MotionItem,
   TextItem,
 } from '@shotbeam/core'
-import { captionGroups, itemEnd } from '@shotbeam/core'
+import { captionGroups, itemEnd, SAFE_ZONE } from '@shotbeam/core'
 import { useEffect, useRef, useState } from 'react'
 import { mediaUrl } from '../../lib/api'
 import { resolveFamily, useLibraryFonts } from './fonts'
@@ -307,6 +307,7 @@ export function Preview({ composition }: { composition: Composition }) {
   const time = useEditor((s) => s.time)
   const playing = useEditor((s) => s.playing)
   const selected = useEditor((s) => s.selected)
+  const safeZones = useEditor((s) => s.safeZones)
   const fonts = useLibraryFonts()
   const box = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -401,7 +402,45 @@ export function Preview({ composition }: { composition: Composition }) {
             return null
           })
         })}
+        {safeZones && composition.height > composition.width ? <SafeZones /> : null}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Where TikTok, Reels and Shorts draw their own UI over a vertical video (core SAFE_ZONE):
+ * shaded bands, and a dashed box where words and the subject belong.
+ */
+function SafeZones() {
+  const z = SAFE_ZONE
+  const pct = (v: number) => `${(v * 100).toFixed(2)}%`
+  const band = 'pointer-events-none absolute bg-black/35'
+  return (
+    <div className="pointer-events-none absolute inset-0 z-50">
+      <div className={band} style={{ left: 0, right: 0, top: 0, height: pct(z.top) }} />
+      <div className={band} style={{ left: 0, right: 0, top: pct(z.bottom), bottom: 0 }} />
+      <div
+        className={band}
+        style={{
+          top: pct(z.top),
+          height: pct(z.bottom - z.top),
+          right: 0,
+          width: pct(1 - z.right),
+        }}
+      />
+      <div
+        className="absolute border border-dashed border-white/80"
+        style={{
+          left: pct(z.left),
+          top: pct(z.top),
+          width: pct(z.right - z.left),
+          height: pct(z.bottom - z.top),
+        }}
+      />
+      <span className="absolute right-1 bottom-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+        интерфейс площадок (примерно)
+      </span>
     </div>
   )
 }

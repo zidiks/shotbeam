@@ -343,4 +343,65 @@ ${names
       return asset.id
     }
   }
+
+  /*
+   * The HyperFrames registry: about 450 ready-made blocks and components (transitions, titles,
+   * kinetic type, caption styles, overlays, camera moves). Most are 1920x1080 sources: Claude
+   * reads one, recomposes it for the video's frame and saves it as a template, rather than the
+   * engine pasting it in unchanged.
+   */
+  private get registryDir() {
+    const dir = join(this.library.root, 'motion', 'registry')
+    mkdirSync(dir, { recursive: true })
+    return dir
+  }
+
+  private async hyperframes(args: string[], signal?: AbortSignal) {
+    const [cmd, cmdArgs] = nodeTool('npx', ['--yes', `hyperframes@${HYPERFRAMES_VERSION}`, ...args])
+    const { stdout } = await run(cmd, cmdArgs, { cwd: this.registryDir, signal })
+    // npm may print a line before the JSON.
+    return JSON.parse(stdout.slice(stdout.indexOf('{'))) as unknown
+  }
+
+  /** Searches the registry (locally, nothing is sent); English words work best. */
+  async searchBlocks(query: string, opts: { type?: 'block' | 'component'; tag?: string } = {}) {
+    const args = ['catalog', '--json']
+    if (query.trim()) args.push('--query', query.trim())
+    if (opts.type) args.push('--type', opts.type)
+    if (opts.tag) args.push('--tag', opts.tag)
+    const r = (await this.hyperframes(args)) as {
+      total?: number
+      results?: {
+        name: string
+        type: string
+        title?: string
+        description?: string
+        tags?: string[]
+        dimensions?: { width: number; height: number }
+        duration?: number
+        preview?: { video?: string; poster?: string }
+      }[]
+    }
+    return { total: r.total ?? 0, results: r.results ?? [] }
+  }
+
+  /** Installs a block or component into the registry folder and returns its source files. */
+  async getBlock(name: string) {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(name))
+      throw Object.assign(new Error('Bad block name'), { status: 400 })
+    const r = (await this.hyperframes(['add', name, '--json'])) as {
+      ok?: boolean
+      written?: string[]
+      preserved?: string[]
+      snippet?: string
+      warnings?: string[]
+    }
+    if (!r.ok) throw new Error(`hyperframes add ${name} failed`)
+    const files: Record<string, string> = {}
+    for (const path of [...(r.written ?? []), ...(r.preserved ?? [])]) {
+      const rel = relative(this.registryDir, path).replace(/\\/g, '/')
+      if (!rel.startsWith('..') && existsSync(path)) files[rel] = readFileSync(path, 'utf8')
+    }
+    return { name, snippet: r.snippet ?? '', files, warnings: r.warnings ?? [] }
+  }
 }

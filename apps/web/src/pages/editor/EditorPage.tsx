@@ -37,6 +37,7 @@ import {
   Plus,
   Redo2,
   SkipBack,
+  SquareDashed,
   Type,
   Undo2,
   Wand2,
@@ -65,6 +66,7 @@ import { useUi } from '../../lib/store'
 import { Inspector } from './Inspector'
 import { Splitter, useLayout } from './layout'
 import { Preview } from './Preview'
+import { ReviewButton } from './ReviewButton'
 import { startClock, useEditor } from './state'
 import { Timeline } from './Timeline'
 
@@ -175,6 +177,7 @@ export function EditorPage({ id }: { id: string }) {
   const c = comp.data
   const ops = useCompositionOps(id)
   const { assets, beats: beatsOf } = useAssetMap(c)
+  const safeZones = useEditor((s) => s.safeZones)
   const sizes = useLayout()
   const beats = useMemo(() => (c ? timelineBeats(c, (id) => beatsOf.get(id)) : []), [c, beatsOf])
   const settings = useSettings().data
@@ -491,6 +494,15 @@ export function EditorPage({ id }: { id: string }) {
         shortcut: comboLabel({ code: 'KeyC', shift: true }),
         onSelect: () => captions.mutate(),
       },
+      ...(comp.height > comp.width
+        ? [
+            {
+              label: s.safeZones ? 'Скрыть безопасные зоны' : 'Показать безопасные зоны',
+              icon: SquareDashed,
+              onSelect: () => s.setSafeZones(!s.safeZones),
+            },
+          ]
+        : []),
       'separator',
       ...renderEntries(),
     ]
@@ -608,6 +620,7 @@ export function EditorPage({ id }: { id: string }) {
           {c.width}×{c.height} · {c.fps} fps · v{c.version}
         </span>
         <div className="ml-auto flex items-center gap-1.5">
+          <ReviewButton compositionId={c.id} />
           <Button size="sm" variant="ghost" onClick={addText}>
             <Type />
             Текст
@@ -719,6 +732,23 @@ export function EditorPage({ id }: { id: string }) {
             >
               {playing ? <Pause /> : <Play />}
             </Button>
+            {c.height > c.width ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-pressed={safeZones}
+                    className={safeZones ? 'text-brand' : undefined}
+                    onClick={() => useEditor.getState().setSafeZones(!safeZones)}
+                    aria-label="Безопасные зоны"
+                  >
+                    <SquareDashed />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Где TikTok, Reels и Shorts рисуют свой интерфейс</TooltipContent>
+              </Tooltip>
+            ) : null}
           </div>
         </div>
         <Splitter panel="inspector" sign={-1} />

@@ -12,12 +12,15 @@ import {
   compositionDuration,
   newId,
   nowIso,
+  type ReviewResult,
+  reviewComposition,
   shiftWords,
   timelineBeats,
   trackLabel,
   type Word,
 } from '@shotbeam/core'
 import type { JobQueue } from './jobs'
+import { measureLoudness } from './media/ffmpeg'
 import type { Indexer } from './media/indexer'
 import type { Motion } from './motion/motion'
 import type { Library } from './paths'
@@ -109,6 +112,63 @@ export class Compositions {
 
   private timelineBeats(c: Composition) {
     return timelineBeats(c, (assetId) => this.indexer.analysis(assetId).music?.beats)
+  }
+
+  /** Loudness of rendered files, by path and change time (measuring reads the whole file). */
+  private readonly loudness = new Map<
+    string,
+    { loudness: number | null; truePeak: number | null }
+  >()
+
+  /**
+   * What a first-time viewer would trip over (core/review.ts), with the loudness of the last
+   * render measured.
+   */
+  async review(
+    id: string,
+  ): Promise<ReviewResult & { render: { assetId: string; path: string } | null }> {
+    const c = this.store.getComposition(id)
+    const assets = new Map<string, { role: Asset['role']; hasAudio: boolean }>()
+    let speech = false
+    for (const track of c.tracks)
+      for (const item of track.items) {
+        if (item.type !== 'clip' && item.type !== 'audio') continue
+        if (assets.has(item.assetId)) continue
+        const a = this.store.getAsset(item.assetId)
+        assets.set(a.id, { role: a.role, hasAudio: a.hasAudio })
+        if (track.muted) continue
+        if (a.role === 'voice') speech = true
+        else if (
+          item.type === 'clip' &&
+          a.hasAudio &&
+          this.indexer.analysis(a.id).transcript?.text.trim()
+        )
+          speech = true
+      }
+    const format = c.formatId ? this.store.getFormat(c.formatId) : null
+    // The newest render of this composition (render assets note where they came from).
+    const render = this.store
+      .listAssets({ role: 'render', limit: 1000 })
+      .items.filter((a) => a.notes === `Composition ${c.id}` && existsSync(a.path))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+    let measured: { loudness: number | null; truePeak: number | null } | null = null
+    if (render) {
+      const key = `${render.path}:${statSync(render.path).mtimeMs}`
+      measured = this.loudness.get(key) ?? null
+      if (!measured) {
+        measured = await measureLoudness(render.path).catch(() => null)
+        if (measured) this.loudness.set(key, measured)
+      }
+    }
+    const result = reviewComposition({
+      composition: c,
+      assets,
+      beats: this.timelineBeats(c),
+      format,
+      speech,
+      render: measured,
+    })
+    return { ...result, render: render ? { assetId: render.id, path: render.path } : null }
   }
 
   /**
@@ -219,7 +279,7 @@ export class Compositions {
         words,
         style: {
           preset: f?.style === 'karaoke' || f?.style === 'minimal' ? f.style : 'bold-pop',
-          y: f?.position ?? 0.72,
+          y: f?.position ?? 0.63,
           uppercase: f?.uppercase ?? false,
           maxWords: f?.maxWords ?? 3,
           ...style,

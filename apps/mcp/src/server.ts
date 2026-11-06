@@ -34,6 +34,7 @@ import {
   t,
   transcriptLines,
 } from './format'
+import { GUIDE, GUIDE_TOPICS, guideText } from './guide'
 
 export const VERSION = '0.1.0'
 
@@ -42,6 +43,7 @@ type Content = { type: 'text'; text: string } | { type: 'image'; data: string; m
 const INSTRUCTIONS = `Shotbeam is the user's local studio for short vertical videos (Reels, Shorts, TikTok). You are the editor's brain; these tools are your hands.
 
 How to work:
+- Quality first: read production_guide (script, pacing, captions, motion, sound, vertical, review) before writing a script or building an edit, and run review_composition before every render; fix its P0 and P1 notes.
 - Projects hold brand rules (tone, colours, fonts). Read them before writing scripts or captions.
 - Media is indexed: transcripts with word times, scenes, candidate moments, contact sheets. To find juicy moments, read get_asset, then LOOK at view_sheets / get_frames before choosing; candidate moments are only hints.
 - References are other people's videos (add_reference with a link). Take their format apart (get_reference, view_sheets on its asset), write the breakdown with save_reference_analysis, and capture the repeatable mechanics as a format (create_format / update_format). Never put reference footage in an edit.
@@ -536,11 +538,12 @@ Still working: follow it with wait_job ${done.id}.`
       inputSchema: {
         query: z.string().min(2),
         share_alike: z.boolean().optional(),
+        sound_effects: z.boolean().optional(),
         page: z.number().int().min(1).optional(),
       },
       annotations: { readOnlyHint: true },
     },
-    ({ query: q, share_alike, page }) =>
+    ({ query: q, share_alike, sound_effects, page }) =>
       run(async () => {
         const r = await api.get<{
           total: number
@@ -557,7 +560,7 @@ Still working: follow it with wait_job ${done.id}.`
           }[]
           pixabay: string
         }>(
-          `/api/music/openverse${query({ q, license: share_alike ? 'share-alike' : 'credit', page })}`,
+          `/api/music/openverse${query({ q, license: share_alike ? 'share-alike' : 'credit', page, kind: sound_effects ? 'sfx' : undefined })}`,
         )
         const out = [`${r.total} track(s) on Openverse for "${q}":`]
         for (const x of r.results)
@@ -579,14 +582,19 @@ Still working: follow it with wait_job ${done.id}.`
       title: 'Import a track from Openverse',
       description:
         'Downloads an Openverse track (id from search_music_online) into the shared music library; its beats and mood numbers are analysed like any track. Returns the asset and the credit line to put in the video description for CC BY.',
-      inputSchema: { id: z.string(), project: z.string().optional() },
+      inputSchema: {
+        id: z.string(),
+        project: z.string().optional(),
+        as_sfx: z.boolean().optional(),
+      },
     },
-    ({ id, project }) =>
+    ({ id, project, as_sfx }) =>
       run(async () => {
         const projectId = project ? (await projectByName(project)).id : null
         const job = await wait(
           await api.post<Job>(`/api/music/openverse/${encodeURIComponent(id)}/import`, {
             projectId,
+            role: as_sfx ? 'sfx' : 'music',
           }),
           120,
         )
@@ -596,7 +604,9 @@ Still working: follow it with wait_job ${done.id}.`
         return [
           `${r.existed ? 'Already in the library' : 'Imported'}: ${assetLine(asset).slice(2)}`,
           asset.notes,
-          'Beats and mood numbers arrive after analysis (find_music / get_asset).',
+          as_sfx
+            ? 'Place its peak one frame after the picture it belongs to, 3–6 dB over the bed (production_guide sound).'
+            : 'Beats and mood numbers arrive after analysis (find_music / get_asset).',
         ].join('\n')
       }),
   )
@@ -887,6 +897,119 @@ Still working: follow it with wait_job ${done.id}.`
   )
 
   // Motion
+
+  server.registerTool(
+    'production_guide',
+    {
+      title: 'Production guide',
+      description: `Measured rules for short vertical video: ${GUIDE_TOPICS.map((k) => `${k} (${GUIDE[k]?.title})`).join(', ')}. Read the whole guide once per session, a topic when you work on it.`,
+      inputSchema: { topic: z.enum(GUIDE_TOPICS as [string, ...string[]]).optional() },
+      annotations: { readOnlyHint: true },
+    },
+    ({ topic }) => run(async () => guideText(topic)),
+  )
+
+  server.registerTool(
+    'review_composition',
+    {
+      title: 'Review a video before rendering',
+      description:
+        "What a first-time viewer on a phone would trip over: empty first frame, black gaps, no hook text, stretches with nothing changing, text too short / small / under the apps' UI, no sound, speech without captions, slow pacing, cuts off the beat when the format asks, repeated motion, and the loudness of the last render. Notes are P0 (breaks it), P1 (weakens it), P2 (polish), with times and item ids.",
+      inputSchema: { id: z.string() },
+      annotations: { readOnlyHint: true },
+    },
+    ({ id }) =>
+      run(async () => {
+        const r = await api.get<{
+          notes: {
+            level: string
+            code: string
+            at: number | null
+            itemId: string | null
+            problem: string
+            fix: string
+          }[]
+          stats: { duration: number; shots: number; averageShot: number; cutsPer10s: number }
+          render: { assetId: string } | null
+        }>(`/api/compositions/${id}/review`)
+        const s = r.stats
+        const out = [
+          `${t(s.duration)} long, ${s.shots} shots on V1, average ${s.averageShot.toFixed(1)} s, ${s.cutsPer10s.toFixed(1)} cuts per 10 s.${r.render ? ` Loudness measured on render [${r.render.assetId}].` : ' Not rendered yet: loudness unchecked.'}`,
+        ]
+        if (!r.notes.length)
+          out.push('No problems found by the measurable checks. Still look at the frames.')
+        for (const n of r.notes)
+          out.push(
+            `${n.level} · ${n.at === null ? '—' : t(n.at)}${n.itemId ? ` · [${n.itemId}]` : ''} · ${n.problem} → ${n.fix}`,
+          )
+        return out.join('\n')
+      }),
+  )
+
+  server.registerTool(
+    'search_motion_blocks',
+    {
+      title: 'Search ready-made motion (HyperFrames registry)',
+      description:
+        'About 450 ready-made HyperFrames blocks (whole scenes: transitions, title cards, kinetic type, overlays, lower thirds, charts, 3D) and components (snippets: text effects, caption styles, camera moves, textures). Search locally in English by what the beat should do ("reveal a headline word by word", "whip transition"). Then get_motion_block to read one and adapt it into a template.',
+      inputSchema: {
+        query: z.string().optional(),
+        type: z.enum(['block', 'component']).optional(),
+        tag: z.string().optional(),
+        limit: z.number().int().min(1).max(40).optional(),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    ({ query: q, type, tag, limit }) =>
+      run(async () => {
+        const r = await api.get<{
+          total: number
+          results: {
+            name: string
+            type: string
+            title?: string
+            description?: string
+            tags?: string[]
+            dimensions?: { width: number; height: number }
+            duration?: number
+          }[]
+        }>(`/api/motion/blocks${query({ q, type, tag })}`)
+        const shown = r.results.slice(0, limit ?? 15)
+        if (!shown.length)
+          return 'Nothing matched; describe the move in other English words, or build it by hand following production_guide motion.'
+        return [
+          `${r.results.length} of ${r.total} items match:`,
+          ...shown.map(
+            (b) =>
+              `- ${b.name} (${b.type}${b.dimensions ? `, ${b.dimensions.width}x${b.dimensions.height}` : ''}${b.duration ? `, ${b.duration}s` : ''}) — ${b.title ?? ''}: ${b.description ?? ''}${b.tags?.length ? ` #${b.tags.join(' #')}` : ''}`,
+          ),
+        ].join('\n')
+      }),
+  )
+
+  server.registerTool(
+    'get_motion_block',
+    {
+      title: 'Read a registry block',
+      description:
+        'Installs a HyperFrames registry block or component and returns its source. To use it in a video, adapt it into a HyperFrames template with save_motion_template: recompose it for the video frame (usually 1080x1920: re-lay out, do not just scale), give the root data-composition-id="main" with data-width/height/duration, declare the texts and colours you want editable as variables on <html> (data-composition-variables, bound with data-var-text / var(--name)), register the paused GSAP timeline as window.__timelines["main"], and use the brand\'s colours and fonts. Keep its motion timings; they are the point.',
+      inputSchema: { name: z.string().regex(/^[a-z0-9][a-z0-9-]*$/) },
+    },
+    ({ name }) =>
+      run(async () => {
+        const r = await api.get<{
+          name: string
+          snippet: string
+          files: Record<string, string>
+          warnings: string[]
+        }>(`/api/motion/blocks/${name}`)
+        return [
+          `Block ${r.name}. Mount snippet as installed: ${r.snippet}`,
+          ...(r.warnings.length ? [`Warnings: ${r.warnings.join('; ')}`] : []),
+          ...Object.entries(r.files).map(([f, c]) => `--- ${f}\n${c}`),
+        ].join('\n\n')
+      }),
+  )
 
   server.registerTool(
     'list_motion_templates',

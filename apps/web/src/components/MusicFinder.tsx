@@ -33,19 +33,20 @@ type Tab = 'openverse' | 'pixabay' | 'musicgen'
 function Openverse() {
   const [q, setQ] = useState('')
   const [shareAlike, setShareAlike] = useState(false)
+  const [kind, setKind] = useState<'music' | 'sfx'>('music')
   const [importing, setImporting] = useState<string | null>(null)
   const search = useMutation({
     mutationFn: () =>
       api.get<{ total: number; results: Track[] }>(
-        `/api/music/openverse?q=${encodeURIComponent(q.trim())}&license=${shareAlike ? 'share-alike' : 'credit'}&pageSize=20`,
+        `/api/music/openverse?q=${encodeURIComponent(q.trim())}&license=${shareAlike ? 'share-alike' : 'credit'}&pageSize=20&kind=${kind}`,
       ),
     onError: errorToast,
   })
   const importTrack = async (t: Track) => {
     setImporting(t.id)
     try {
-      await api.post(`/api/music/openverse/${t.id}/import`, { projectId: null })
-      toast.success(`«${t.title}» скачивается в музыку`, {
+      await api.post(`/api/music/openverse/${t.id}/import`, { projectId: null, role: kind })
+      toast.success(`«${t.title}» скачивается в ${kind === 'sfx' ? 'звуки' : 'музыку'}`, {
         description: t.license.startsWith('BY')
           ? 'CC BY: укажи автора в описании ролика — строка атрибуции в заметках трека.'
           : 'Атрибуция не обязательна.',
@@ -58,6 +59,17 @@ function Openverse() {
   }
   return (
     <div className="space-y-3">
+      <Segmented
+        value={kind}
+        onChange={(k) => {
+          setKind(k)
+          search.reset()
+        }}
+        options={[
+          { value: 'music', label: 'Музыка' },
+          { value: 'sfx', label: 'Звуковые эффекты' },
+        ]}
+      />
       <form
         className="flex gap-2"
         onSubmit={(e) => {
@@ -68,7 +80,11 @@ function Openverse() {
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="upbeat electronic, lofi chill, epic orchestral…"
+          placeholder={
+            kind === 'sfx'
+              ? 'whoosh, pop, riser, click, impact…'
+              : 'upbeat electronic, lofi chill, epic orchestral…'
+          }
           autoFocus
         />
         <Button type="submit" variant="brand" disabled={!q.trim()} loading={search.isPending}>
@@ -103,7 +119,9 @@ function Openverse() {
                   ) : null}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {t.duration ? `${timecode(t.duration, true)} · ` : ''}
+                  {t.duration
+                    ? `${t.duration < 10 ? `${t.duration.toFixed(1)} с` : timecode(t.duration, true)} · `
+                    : ''}
                   {t.license} · {t.source}
                   {t.genres.length || t.tags.length
                     ? ` · ${[...t.genres, ...t.tags].slice(0, 5).join(', ')}`
@@ -118,7 +136,8 @@ function Openverse() {
                 loading={importing === t.id}
                 onClick={() => void importTrack(t)}
               >
-                <Download />В музыку
+                <Download />
+                {kind === 'sfx' ? 'В звуки' : 'В музыку'}
               </Button>
             </li>
           ))}

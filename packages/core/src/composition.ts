@@ -81,7 +81,8 @@ export const CaptionStyle = z.object({
   color: z.string().default('#ffffff'),
   highlight: z.string().default('#ffd400'),
   stroke: z.string().default('#000000'),
-  y: z.number().default(0.72),
+  // Two lines end near 1290 px of 1920: above the caption, handle and buttons the apps draw.
+  y: z.number().default(0.63),
   maxWords: z.number().int().positive().default(3),
   uppercase: z.boolean().default(false),
 })
